@@ -1,0 +1,22 @@
+# līlā — Local Development Stack
+#
+# Usage:
+#   docker compose up --build
+#
+# Then open http://localhost:8001 in your browser.
+#
+# To stop:
+#   docker compose down
+
+services:
+  worker:
+    build:
+      context: ../..
+      dockerfile: deploy/compose/Dockerfile.worker
+    ports:
+      - "8001:8001"
+    environment:
+      - VIZ_DIR=/app/viz
+      - WORLD_FILE=/app/demo_world.json
+      - LOG_LEVEL=INFO
+    restart: unless-stopped

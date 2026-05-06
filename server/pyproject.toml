@@ -1,0 +1,50 @@
+[project]
+name = "lila-ecosim"
+version = "0.1.0"
+description = "līlā — a BYOM ecosystem simulation engine"
+requires-python = ">=3.11"
+license = "Apache-2.0"
+authors = [{ name = "BioSynthArt Studios LLC" }]
+dependencies = []  # zero external deps — stdlib only
+
+[project.optional-dependencies]
+worker = ["websockets>=12.0"]
+gateway = ["fastapi>=0.110", "uvicorn[standard]", "redis>=5.0"]
+dev = [
+    "pytest>=8.0",
+    "pytest-asyncio>=0.23",
+    "ruff>=0.4",
+    "pyright>=1.1",
+]
+all = ["lila-ecosim[worker,dev]"]
+
+[project.scripts]
+lila-worker = "ecosim.worker:main"
+lila-smoke = "tests.smoke_test:main"
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["ecosim*"]
+
+[tool.uv]
+dev-dependencies = [
+    "lila-ecosim[all]",
+]
+
+[tool.ruff]
+target-version = "py311"
+line-length = 120
+
+[tool.ruff.lint]
+select = ["E", "F", "I", "N", "UP"]
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]
+asyncio_mode = "auto"
+
+[tool.pyright]
+pythonVersion = "3.11"
+typeCheckingMode = "basic"
