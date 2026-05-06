@@ -141,16 +141,21 @@ engine = EcosystemEngine(world, adapters={
 engine = EcosystemEngine(world)
 ```
 
-A custom adapter implements two methods:
+A custom adapter implements three methods (though context_spec_for can 
+just delegate to context_spec if you don't need type-specific inputs):
 
 ```python
 class MyMotorAdapter:
     def context_spec(self) -> ContextSpec:
-        """Declare what inputs your model needs."""
+        """What inputs your model needs."""
         ...
 
+    def context_spec_for(self, entity_type: str) -> ContextSpec:
+        """Type-specific inputs. Defaults to context_spec()."""
+        return self.context_spec()
+
     def infer(self, contexts: list[list[float]]) -> list[list[float]]:
-        """Batch of entity contexts → batch of motion latent vectors."""
+        """Batch of context vectors → batch of latent vectors."""
         ...
 ```
 
