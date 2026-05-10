@@ -1,3 +1,10 @@
+<!-- 
+  līlā — BYOM Ecosystem Simulation Engine
+  Copyright 2025 BioSynthArt Studios LLC
+  Licensed under the Apache License, Version 2.0
+  https://github.com/hellolifeforms/lila
+-->
+
 # līlā — Trait-Based Architecture Transition Plan
 
 > From hand-crafted species rules to allometrically-derived ecological dynamics,

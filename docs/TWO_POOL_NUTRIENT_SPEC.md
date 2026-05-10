@@ -1,3 +1,10 @@
+<!-- 
+  līlā — BYOM Ecosystem Simulation Engine
+  Copyright 2025 BioSynthArt Studios LLC
+  Licensed under the Apache License, Version 2.0
+  https://github.com/hellolifeforms/lila
+-->
+
 # līlā — Two-Pool Nutrient Split: Implementation Spec
 
 > **Decision:** Split the single `nutrients` voxel layer into `nutrients_fast` and
@@ -14,36 +21,36 @@
 ## Conceptual Model
 
 ```
-                    ┌─────────────────────┐
+                    ┌──────────────────────┐
                     │   Dead Entities      │
                     │   (animal/plant)     │
-                    └──────────┬──────────┘
+                    └──────────┬───────────┘
                                │ death event: +biomass
                                ▼
-                    ┌─────────────────────┐
+                    ┌──────────────────────┐
                     │   organic_matter     │  Layer 5 (existing, unchanged)
                     │   (dead biomass)     │  Slow decay, spatial
-                    └──────────┬──────────┘
+                    └──────────┬───────────┘
                                │ decomposition rate (accelerated by decomposers)
                                ▼
-┌──────────┐       ┌─────────────────────┐
-│   Rain   │──────▶│   nutrients_slow     │  Layer 2 (NEW)
+┌──────────┐       ┌──────────────────────┐
+│   Rain   │─────> │   nutrients_slow     │  Layer 2 (NEW)
 │ (mineral │       │   (mineralized pool) │  Stable, slow-release
 │  input)  │       │   Long-term soil     │  Represents soil health
 └──────────┘       │   health indicator   │
-    │              └──────────┬──────────┘
+    │              └──────────┬───────────┘
     │                         │ dissolution rate
     │                         ▼
     │              ┌─────────────────────┐
-    └─────────────▶│   nutrients_fast     │  Layer 1 (replaces old "nutrients")
-                   │   (plant-available)  │  Quick turnover
-                   │   Dissolved, labile  │  Plants consume from here
+    └─────────────>│   nutrients_fast    │  Layer 1 (replaces old "nutrients")
+                   │   (plant-available) │  Quick turnover
+                   │   Dissolved, labile │  Plants consume from here
                    └──────────┬──────────┘
                               │ plant uptake
                               ▼
                    ┌─────────────────────┐
-                   │   Plant Growth       │
-                   │   (health, growth)   │
+                   │   Plant Growth      │
+                   │   (health, growth)  │
                    └─────────────────────┘
 ```
 
