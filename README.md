@@ -261,15 +261,64 @@ For the full argument, see
 ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand)
 on Substack.
 
+## Roadmap
+
+The current engine encodes ecological knowledge as **per-species rules** —
+each species has hand-tuned guard thresholds, hard-coded interaction logic,
+and type-specific flow equations. This works for five species. It won't
+scale to fifty.
+
+The next major architecture shift replaces species-specific rules with
+**functional traits and allometric scaling**. A species becomes a point
+in trait space — body mass, diet type, metabolic class, locomotion mode —
+and the engine derives all behavior parameters from established ecological
+scaling laws (Kleiber's Law, metabolic theory of ecology). Adding a wolf
+means writing a JSON trait vector, not new Python code. The interaction
+templates (herbivory, predation, pollination, decomposition) handle the
+combinatorics.
+
+This also makes līlā a compelling **substrate for automated search**.
+Recent work on [Automated Search for Artificial Life](https://asal.sakana.ai/)
+(ASAL) uses foundation models to discover interesting simulations across
+substrates like Boids, Particle Life, and Lenia. Those substrates produce
+visually interesting emergence, but the emergence has no ecological
+semantics — a Lenia pattern that looks like a cell isn't modeling nutrient
+uptake. līlā's trait-based engine would be a substrate where the search
+space is biologically meaningful: "what community of trait-defined
+organisms produces the most open-ended dynamics on this biome?" is a
+question with real ecological content.
+
+**Near-term:**
+- Trait-based species definitions (body mass → derived behavior)
+- Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition)
+- New species by JSON trait vector only — wolf, songbird, decomposer fungi
+- Headless renderer for FM-guided evaluation
+
+**Medium-term:**
+- ASAL substrate protocol (Init/Step/Render interface)
+- FM-guided ecosystem search (CMA-ES over trait space, CLIP evaluation)
+- Simulation atlas — UMAP of discovered ecosystem configurations
+- Godot 3D client with latent-driven skeletal animation
+
+See [LILA_PROJECT_STATE.md](LILA_PROJECT_STATE.md) for detailed milestones.
+
 ## Contributing
 
 līlā is in early alpha. Contributions welcome — especially:
 
-- **New species** — add entity metadata, tune flow equations, submit a PR
+- **New species** — today: entity metadata + flow equation tuning.
+  Soon: a JSON trait vector and the engine derives the rest
 - **Motor adapters** — train a model, export weights, share it
 - **Biome presets** — new environments with tuned simulation constants
-- **Client work** — the Godot client needs skeleton rigs, shaders, and scene work
-- **Bug reports** — the [known issues](docs/lessons_learned.md) are documented, but there are certainly more
+- **Ecological modeling** — allometric scaling, interaction templates,
+  soil nutrient dynamics. If you know metabolic theory of ecology,
+  there's real work here
+- **Client work** — the Godot client needs skeleton rigs, shaders,
+  and scene work
+- **ALife/search integration** — if you've worked with ASAL, Lenia,
+  or similar frameworks, the substrate protocol is being designed
+- **Bug reports** — the [known issues](docs/lessons_learned.md) are
+  documented, but there are certainly more
 
 ## Acknowledgments
 

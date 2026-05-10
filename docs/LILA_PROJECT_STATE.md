@@ -1,0 +1,621 @@
+# līlā — Project State (v0.0.1-alpha)
+
+## Current Status
+
+**Tagged release: v0.0.1-alpha** — published, repo public on GitHub.
+
+līlā is a BYOM (Bring Your Own Model) ecosystem simulation engine. Users define a world in JSON — species, biome, soil, water — and the engine grows an autonomous ecosystem from simple rules. The server runs the hybrid automaton (ecology, physics, ML inference); clients render the result via WebSocket at 10 Hz.
+
+The project thesis — explored in ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand) — is that the most impactful AI is small, specialized, and invisible. Tiny ML models guide lifelike motion and behavior; the user never sees inference happening, they just see a world that feels alive.
+
+The name comes from the Sanskrit concept of [līlā](https://www.embodiedphilosophy.com/what-is-lila/) — the spontaneous, purposeless creative unfolding of reality. There's no win condition. The world plays as itself.
+
+**Current direction:** The engine is transitioning from hand-crafted per-species rules to a **trait-based architecture** using allometric scaling laws (Metabolic Theory of Ecology). Species become points in trait space; the engine derives all behavior parameters from body mass and functional traits. This also makes līlā a compelling **substrate for automated ALife search** (ASAL framework) — an ecologically-grounded simulation where FM-guided search discovers interesting ecosystem configurations.
+
+**Copyright:** BioSynthArt Studios LLC. **License:** Apache 2.0.
+**Source control:** GitHub at `github.com/hellolifeforms/lila` (org: hellolifeforms).
+**CI:** GitHub Actions (`.github/workflows/test.yml`) — pytest + ruff, Python 3.11/3.12. Badge in README.
+**Social:** @hellolifeforms on Bluesky, Postcorporate on Substack.
+
+---
+
+## Architecture Overview
+
+```
+┌─────────────────────────┐
+│    Browser Visualizer   │  ← v0.0.1-alpha (shipped, single HTML file)
+│    Godot 4.x Client     │  ← deferred to Milestone 4
+│    Headless Renderer     │  ← Milestone 3 (for ASAL search)
+└──────────┬──────────────┘
+           │ WebSocket (delta-encoded tick packets)
+┌──────────▼──────────────┐
+│    Worker               │  ← Shipped. HTTP + WS on single port
+│    (one per session)    │     Serves viz HTML, streams ticks
+└──────────┬──────────────┘
+           │
+┌──────────▼──────────────────────────────────────────┐
+│    ecosim (Python package, stdlib only)              │
+│  ┌────────────────┐  ┌────────────────────────────┐ │
+│  │ Hybrid Automaton│  │ Trait System (Milestone 2) │ │
+│  │ Flow + Guards   │  │ TraitVector + Compiler     │ │
+│  ├────────────────┤  │ Allometric Derivations     │ │
+│  │ Voxel Manager   │  │ Interaction Templates      │ │
+│  │ 5 layers (M2)   │  ├────────────────────────────┤ │
+│  ├────────────────┤  │ BYOM Adapters              │ │
+│  │ Water System    │  │ mlp/static/random          │ │
+│  │ Dynamic levels  │  ├────────────────────────────┤ │
+│  ├────────────────┤  │ World Randomizer           │ │
+│  │ Two-Pool Soil   │  │ D4 transforms              │ │
+│  │ Fast/Slow (M2)  │  └────────────────────────────┘ │
+│  └────────────────┘                                  │
+└──────────────────────────────────────────────────────┘
+           │
+┌──────────▼──────────────────────────────────────────┐
+│    search/ (Milestone 3, separate package)           │
+│    ASAL Substrate Protocol (Init/Step/Render)        │
+│    FM Evaluator (CLIP/DINOv2)                        │
+│    CMA-ES Search (target, open-ended, illumination)  │
+│    Simulation Atlas Visualization                    │
+└──────────────────────────────────────────────────────┘
+```
+
+---
+
+## Repository Structure
+
+```
+lila/
+├── server/
+│   ├── pyproject.toml              # lila-ecosim package, stdlib only
+│   ├── .python-version             # uv Python version (3.12)
+│   ├── uv.lock                     # deterministic dependency lockfile
+│   ├── ecosim/                     # core simulation library
+│   │   ├── __init__.py
+│   │   ├── engine.py               # hybrid automaton (EcosystemEngine)
+│   │   ├── entities.py             # entity schemas, init_entity()
+│   │   ├── biome.py                # biome presets → BiomeConfig
+│   │   ├── voxel_manager.py        # sparse 3D grid, delta tracking
+│   │   ├── model_adapter.py        # MotorAdapter protocol, ContextSpec
+│   │   ├── worker.py               # async WS tick loop + HTTP viz server
+│   │   ├── traits.py               # [M2] TraitVector, allometric derivations
+│   │   ├── interactions.py         # [M2] InteractionTemplate grammar
+│   │   ├── trait_compiler.py       # [M2] TraitCompiler: traits → engine params
+│   │   └── adapters/
+│   │       ├── __init__.py         # create_adapter() factory
+│   │       ├── mlp.py              # reference MLP (~500 params, pure Python)
+│   │       ├── static.py           # hand-tuned latent per state
+│   │       └── random.py           # random latents for testing
+│   ├── examples/
+│   │   ├── demo_world.json         # temperate meadow with randomization
+│   │   └── temperate_meadow_8sp.json # [M3] 8-species trait-based world
+│   ├── tests/
+│   │   ├── smoke_test.py           # 50-tick integration test
+│   │   ├── test_ecosim.py          # unit tests (12 tests)
+│   │   ├── test_traits.py          # [M2] allometric derivation tests
+│   │   ├── test_nutrients.py       # [M2] two-pool nutrient flow tests
+│   │   └── test_regression.py      # [M2] 2000-tick baseline comparison
+│   └── weights/
+│       └── (motion_v0.json)        # placeholder for trained weights
+│
+├── client/
+│   ├── browser/
+│   │   └── index.html              # canvas-based 2D ecosystem visualizer
+│   └── godot/                      # [M4] Godot 4.x client
+│
+├── search/                         # [M3] ASAL substrate + search
+│   ├── pyproject.toml              # deps: torch, clip, cma, umap, pillow
+│   ├── substrate.py                # ALifeSubstrate protocol + LilaSubstrate
+│   ├── renderer.py                 # headless PIL renderer (256×256)
+│   ├── evaluator.py                # FM evaluation (CLIP, DINOv2)
+│   ├── search.py                   # supervised, open-ended, illumination
+│   ├── theta.py                    # θ parameterization (EcoRates/Topology/Adapt)
+│   ├── atlas.py                    # simulation atlas UMAP visualization
+│   ├── constraints.py              # physical plausibility validation
+│   └── examples/
+│       ├── search_target.py
+│       ├── search_openended.py
+│       └── search_illuminate.py
+│
+├── training/                       # ML training pipeline (not core)
+│   ├── pyproject.toml
+│   ├── data/
+│   ├── scripts/
+│   └── notebooks/
+│
+├── deploy/
+│   └── compose/                    # ← primary getting-started path
+│       ├── docker-compose.yml
+│       ├── Dockerfile.worker
+│       └── README.md
+│
+├── docs/
+│   ├── model_adapter_spec.md       # BYOM guide — how to build adapters
+│   ├── data_contract.md            # v0.2 protocol spec
+│   ├── architecture.md
+│   ├── species_spec.md             # 0.1-alpha species + skeleton rigs
+│   ├── lessons_learned.md          # debugging war stories
+│   ├── trait_species_guide.md      # [M2] how biologists add species
+│   └── asal_substrate_guide.md     # [M3] how to use līlā with ASAL
+│
+├── .github/workflows/
+│   └── test.yml                    # CI: pytest + ruff, Python 3.11/3.12
+│
+├── DEVELOPING.md                   # uv workflow, dev setup
+├── LICENSE                         # Apache 2.0
+├── README.md                       # project overview, quick start, roadmap
+├── TRAIT_TRANSITION_PLAN.md        # detailed Phase 1-3 implementation plan
+└── TWO_POOL_NUTRIENT_SPEC.md       # two-pool soil nutrient spec
+```
+
+Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
+
+---
+
+## What Shipped in v0.0.1-alpha
+
+### Core Engine (ecosim)
+
+**Hybrid automaton** — seven-phase tick loop: flow → interactions → guards → voxel effects → water replenishment → soil evaporation → motor inference → removals → spawns.
+
+**Entity types:** ANIMAL, BIRD, INSECT, PLANT, TREE, MICROORGANISM. Each has type-specific flow equations, guard conditions with hysteresis, and valid state sets.
+
+**Behavioral intelligence** (no ML required):
+- Purposeful movement — entities seek food, water, flowers, and mates based on state
+- Grazing chain — deer seek nearest grass, fall back to wildflowers when grass is gone
+- Pollination chain — butterflies seek FRUITING wildflowers, linger 1.5–3s, then seek next bloom. Flower cooldown prevents re-pollination
+- Water seeking — thirsty animals walk to nearest pond, drink, drain the source
+- Mate seeking — grid-wide search when reproductive drive is high, proximity check for actual reproduction
+- Flee response — prey flees from carnivores with clamped escape targets
+
+**Guard hysteresis bands:**
+- Hydration: enter DRINKING at 0.2, exit at 0.6
+- Energy: enter RESTING at 0.2, exit at 0.5 (animals) / 0.15→0.4 (insects)
+- Hunger: enter FORAGING at 0.3, exit at 0.15
+- Reproduction: drive > 0.8 AND mate within sensory range (animals) / > 0.7 (insects)
+
+**Plant ecology:**
+- Vegetative spreading — grass (range 2, frequent) and flowers (range 3.5, less frequent) with soil checks, density limits, and parent resource cost
+- Dormancy — plants go DORMANT at health 0 instead of dying. Roots persist. Recovery when soil moisture > 0.25 and nutrients > 0.15
+- Dormancy timeout — 2000 ticks without recovery → permanent death
+- FRUITING threshold — growth ≥ 0.5 and health > 0.4
+
+**Water system:**
+- Dynamic water levels — each source tracks `water_level` (0–1), controls effective radius
+- Evaporation drains water sources, groundwater replenishes, drinking animals deplete
+- Background soil evaporation across the full grid
+- Dried-up sources (< 5%) skipped by pathfinding
+
+**Ecosystem collapse:**
+- Tree collapse pressure when support_count (non-tree, non-insect, non-dormant) ≤ 2
+- Generational decline — children inherit parent stress (hunger × 0.3, energy × 0.9, colony_health × 0.9)
+- Reproduction costs parent colony_health (insects)
+- Starvation acceleration — colony_health drain scales with hunger level
+
+**Rain system:**
+- `apply_rain(intensity)` — boosts soil moisture (+0.24), nutrients (+0.024), water source levels (+0.32), plant hydration (+0.16), plant health (+0.08), animal hydration (+0.08)
+- Suppresses soil evaporation and plant evapotranspiration for 80 ticks
+- Triggered via WebSocket control message `{"type": "rain", "intensity": 0.8}`
+
+**Rate multipliers** (configurable per world):
+- `consumption`, `hunger`, `thirst`, `growth`, `reproduction`, `water_replenishment`
+- All default to 1.0. Stress testing via JSON, no code changes.
+
+**World randomization** (JSON-driven):
+- D4 symmetry transforms (4 rotations × 2 flips = 8 orientations)
+- Position jitter (configurable range)
+- Extra grass (0–4) and wildflower (0–2) spawns
+- Water source position and radius variation
+- State variable jitter (±5%)
+- Plants pushed out of water sources post-randomization
+- Opt-in: omit `"randomize"` key for exact JSON positions
+
+**BYOM adapter system:**
+- `MotorAdapter` protocol — `context_spec()` + `infer()`
+- `ContextSpec` with typed fields, source routing, normalization
+- Type-specific specs via `context_spec_for(entity_type)`
+- Three built-in: `mlp` (500 params, Xavier init), `static` (per-state latents), `random` (testing)
+- `create_adapter()` factory
+
+**Voxel manager:**
+- Sparse 3D grid, four layers: nutrients, moisture, temperature, organic_matter
+- Threshold-gated dirty tracking for delta packets
+- `initialize_from_soil` — correctly initializes all three computed layers (break bug fixed)
+
+### Browser Visualizer
+
+- Canvas-based 2D renderer at 60fps with 10Hz tick interpolation
+- Moisture heatmap (subtle teal→amber gradient)
+- Water sources with radial gradient, animated ripples, dynamic radius/opacity tracking water level
+- Deer as directional triangles with state labels and motion latent halos
+- Butterflies with animated wing flaps and pollination glows
+- Oaks with canopy radius shadows
+- Grass clusters scaling with growth, tinting with hydration
+- Wildflowers pulsing golden during FRUITING
+- Dormant plants as faded brown root markers
+- Event particles (grazing=green, pollination=gold, death=dark)
+- Stats panel (tick, entities, events, fps) + scrolling event log
+- All state transitions logged from tick 1
+- Session started message on connect
+- Entity type inference from ID prefixes
+- **☔ Rain button** — sends rainfall control message, visual feedback
+- **⏺ Record button** — 10-second canvas capture via MediaRecorder, codec fallback (VP9→VP8→WebM→MP4), auto-download
+- Legend with all entity types + water
+
+### Worker
+
+- Combined HTTP + WebSocket on single port
+- `process_request` compatible with websockets 13+ (`connection, request` → `Response` objects)
+- `SimulationSession` with pause/resume/stop/rain controls
+- Control message dispatch table
+- Drift-compensated tick loop
+- File resolution for viz and world (repo, Docker, env vars)
+- CLI headless mode for benchmarking
+
+### Infrastructure
+
+- **Docker Compose** — single command: `docker compose up --build`
+- **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
+- **GitHub CI** — pytest (12 tests) + ruff lint, Python 3.11/3.12
+- **uv workflow** — `uv sync` for local dev, deterministic lockfile
+- **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
+
+### Documentation
+
+- **README.md** — positioning (engine, not game), quick start, architecture diagram, BYOM examples, species table, interaction chains, roadmap, controls, contributing note, CI badge
+- **DEVELOPING.md** — uv workflow, pip fallback, dependency groups, project layout
+- **docs/model_adapter_spec.md** — protocol, context spec, state codes, full worked example, type-specific specs, training/weights, built-in adapter comparison
+- **docs/lessons_learned.md** — debugging war stories from the build session
+- **deploy/compose/README.md** — Docker quick start with controls
+
+---
+
+## 0.1-Alpha Species Set
+
+Five species, two skeletons, five interaction chains:
+
+| Species      | Type   | Skeleton         | Role                                  |
+|--------------|--------|------------------|---------------------------------------|
+| Deer         | ANIMAL | quadruped_medium | Grazer, seeks grass → flowers → water → mates |
+| Butterfly    | INSECT | insect_wing      | Pollinator, seeks flowers → water fallback |
+| Oak          | TREE   | none             | Structure, shade, collapse indicator  |
+| Meadow Grass | PLANT  | none             | Ground cover, spreads via runners     |
+| Wildflower   | PLANT  | none             | Bloom cycle, pollination target       |
+
+**Interaction chains:**
+1. **Grazing** — deer hunger → forages nearest grass → consumption → grass spreads if soil is moist
+2. **Pollination** — wildflower FRUITING → butterfly flies to it → pollinates → lingers → seeks next
+3. **Water** — thirst → walk to pond → drink → pond level drops → soil dries
+4. **Stress cascade** — overgrazing → flowers consumed → butterflies lose food → cluster at ponds → ponds dry → collapse
+5. **Dormancy & recovery** — plants die to roots → rain → soil moisture rises → roots revive → flowers bloom → butterflies return
+
+---
+
+## Completed Milestones
+
+### Milestone 0 — Engine Foundation ✅
+
+1. ✅ WebSocket `process_request` fix for websockets 13+
+2. ✅ Smoke test imports verified (`ecosim.*`)
+3. ✅ Voxel `initialize_from_soil` break bug fixed
+4. ✅ Docker build verified end-to-end
+5. ✅ Dev requirements (uv + pyproject.toml + lockfile)
+
+### Milestone 1 — v0.0.1-alpha Release ✅
+
+6. ✅ README with positioning, quick start, controls, CI badge
+7. ✅ `docs/model_adapter_spec.md` — BYOM guide
+8. ✅ GitHub CI (pytest + ruff, Python 3.11/3.12)
+9. ✅ Tagged v0.0.1-alpha, repo public
+
+### Bonus — Simulation Tuning ✅
+
+10. ✅ Purposeful movement (food/flower/water/mate seeking)
+11. ✅ Water sources with dynamic levels and drought
+12. ✅ Plant dormancy and rain-triggered recovery
+13. ✅ Rain control (button + WebSocket + engine)
+14. ✅ Record button for GIF/video capture
+15. ✅ Butterfly pollination lifecycle (linger, cooldown, skip dormant)
+16. ✅ Generational decline and reproduction costs
+17. ✅ Ecosystem collapse cascade
+18. ✅ Rate multipliers for stress testing
+19. ✅ World randomization (D4 transforms, jitter, extra plants)
+20. ✅ `docs/lessons_learned.md`
+
+---
+
+## Pending — Milestone 2: Trait-Based Architecture + Two-Pool Nutrients
+
+**Goal:** Replace per-species hard-coded rules with functional trait derivations. Split the single nutrient layer into fast/slow pools with mineralization. All existing tests must still pass. The hybrid automaton tick loop does not change.
+
+**Motivation:** The current engine encodes ecological knowledge as per-species rules. Every new species requires hand-tuned guard thresholds, interaction logic, and flow equations — O(n²) design effort. The trait-based approach encodes knowledge as allometric scaling laws and interaction templates, making new species a JSON definition rather than new code. This is informed by the Madingley General Ecosystem Model (Harfoot et al. 2014) and the Metabolic Theory of Ecology (Brown et al. 2004).
+
+**Reference documents:** `TRAIT_TRANSITION_PLAN.md` (Phase 1), `TWO_POOL_NUTRIENT_SPEC.md`
+
+### Step 2.1 — Audit Current Hard-Coded Parameters
+Extract every species-specific constant from `engine.py`, `entities.py`, and `biome.py` into a reference table. This is the calibration target for the derivation layer.
+
+### Step 2.2 — Define TraitVector Schema
+Dataclass capturing functional traits: body_mass_kg, diet_type, diet_breadth, locomotion, thermoregulation, reproductive_strategy, thermal_range, drought_tolerance, sensory_range_multiplier, spread_mode, root_persistence, etc. A species is a point in trait space.
+
+### Step 2.3 — Allometric Derivation Functions
+Pure functions in `ecosim/traits.py` (stdlib only): `TraitVector → DerivedParams`. Core equations:
+- Metabolic rate: BMR = B₀ × M^0.75 (endotherm) / M^0.69 (ectotherm) — Kleiber 1932, Gillooly 2001
+- Cruising speed: v = v₀ × M^0.25 (terrestrial) / M^0.17 (insect flight) — Peters 1983, Dudley 2000
+- Sensory range: ∝ M^0.5 — derived from home range scaling (McNab 1963)
+- Flow rates (hunger, thirst, energy): proportional to metabolic rate
+- Guard thresholds: hysteresis bands scaled by normalized metabolic rate
+- Consumption rate: proportional to metabolic rate
+
+Calibration constants chosen so that deer traits (80 kg, endotherm, quadruped) produce values matching the current hard-coded parameters within 5%.
+
+### Step 2.4 — Interaction Template Grammar
+Six parameterized templates replace per-species-pair code:
+- **Herbivory** — actor diet_breadth matches target resource_tags
+- **Predation** — actor diet_breadth matches target functional_group, body mass ratio constraints (0.1–2× for mammalian, 1–1000× for insectivory)
+- **Pollination** — actor floral_affinity matches target pollination_syndrome, target must be FRUITING
+- **Decomposition** — actor diet_type "decomposer", targets voxel organic_matter layer (unique: interacts with voxels, not entities)
+- **Competition** — implicit via shared resource depletion, no explicit template
+- **Water access** — all mobile non-autotroph entities, thirst derived from metabolic rate
+
+### Step 2.5 — TraitCompiler
+Runs once at world initialization. Takes list of TraitVectors + BiomeConfig, produces: per-entity DerivedParams, sparse interaction matrix, resource tag registry.
+
+### Step 2.6 — Two-Pool Nutrient Refactor
+Split `nutrients` voxel layer into `nutrients_fast` and `nutrients_slow` (voxel layers 4 → 5):
+- **nutrients_fast** (plant-available): quick turnover, depleted by plant growth, refilled by rain and dissolution from slow pool
+- **nutrients_slow** (mineralized reserve): long-term soil health, fed by decomposition of organic_matter, slowly dissolves into fast pool
+- **organic_matter** (existing): dead entity biomass deposited here on death, converted to slow nutrients via mineralization
+
+New per-tick fluxes in voxel effects phase:
+- Mineralization: organic_matter → nutrients_slow (rate 0.002/tick, accelerated by decomposer entities in M3)
+- Dissolution: nutrients_slow → nutrients_fast (rate 0.005/tick)
+- Leaching: nutrients_fast drains slowly (rate 0.001/tick)
+
+Updated touchpoints: rain split (0.020 fast + 0.004 slow), dormancy recovery uses weighted effective nutrients (fast + slow × 0.3), plant spreading checks fast pool only, entity death deposits biomass to organic_matter layer.
+
+Three new rate multipliers: `mineralization`, `dissolution`, `nutrient_leaching` (all default 1.0).
+
+### Step 2.7 — Refactor engine.py
+Replace `if entity["type"] ==` branches with DerivedParams lookups. Seven tick phases refactored one at a time with tests after each: flow → guards → interactions → movement → spawning → voxel effects → motor inference.
+
+### Step 2.8 — Write Trait Vectors for Existing Species
+Express deer, butterfly, oak, meadow grass, wildflower as TraitVectors in JSON. When compiled, must produce parameters matching the Step 2.1 audit within 5%.
+
+### Step 2.9 — Calibration & Regression Testing
+- Compare DerivedParams output against audit table
+- Run full test suite (12 existing + new trait/nutrient tests)
+- 2000-tick regression: population curves, state transitions, event counts within ±10–15% of baseline
+- Backward compatibility: worlds without `species_definitions` key fall back to legacy code paths
+
+### Milestone 2 Deliverables
+- `ecosim/traits.py` — TraitVector, DerivedParams, allometric derivation functions
+- `ecosim/interactions.py` — InteractionTemplate base + 4 concrete templates
+- `ecosim/trait_compiler.py` — TraitCompiler class
+- Refactored `engine.py` — reads from DerivedParams
+- Refactored `voxel_manager.py` — 5 layers, inter-pool fluxes, death deposits
+- Updated `examples/demo_world.json` — species_definitions + 3 new rate multipliers
+- `tests/test_traits.py`, `tests/test_nutrients.py`, `tests/test_regression.py`
+- `docs/trait_species_guide.md` — how to add species via trait vectors
+
+**New files: 4. Modified files: 4. No new external dependencies.**
+
+---
+
+## Pending — Milestone 3: New Species + ASAL Substrate
+
+**Goal:** Validate the trait architecture by adding three species with zero engine code. Build the ASAL substrate protocol and FM-guided search pipeline.
+
+**Reference documents:** `TRAIT_TRANSITION_PLAN.md` (Phases 2–3)
+
+### New Species (Trait Vectors Only)
+
+**Wolf** — completes the food chain: grass → deer → wolf. diet_type: carnivore, diet_breadth: ["herbivore"], body_mass_kg: 40. Predation template matches wolf→deer automatically. Deer flee response triggers from carnivore detection. Expected emergent dynamic: Lotka-Volterra oscillations, trophic cascade (wolves reduce deer → grass recovers).
+
+**Songbird** — new trophic niche: insectivore + frugivore. diet_breadth: ["pollinator", "forb:fruiting"], body_mass_kg: 0.025. Tests insectivory mass-ratio window (predator >> prey, unlike mammalian predation). Expected: songbird-butterfly predation reduces pollination pressure.
+
+**Mushroom** — closes the nutrient loop. diet_type: decomposer, targets organic_matter voxel layer. r_selected (clutch_size 5, fast generation). Accelerates mineralization rate locally. Expected: measurably faster soil recovery near decomposer clusters, 3–4× reduction in ecosystem recovery time after collapse events.
+
+### Emergent Dynamics Validation
+With 8 species, run 10,000-tick simulations documenting which interaction chains emerge without being coded:
+- Wolf-deer predation with population oscillations
+- Trophic cascade: wolves reduce deer → grass recovers → wildflowers bloom
+- Songbird-butterfly predation reducing pollination rates
+- Mushroom decomposition accelerating soil recovery after death events
+- Cross-trophic competition: songbirds and butterflies competing for fruiting flowers
+- Thermal range exclusions in extreme biome settings
+
+### ASAL Substrate Protocol
+
+Formalize līlā as an ASAL-compatible substrate with the three-function interface:
+- `Init(θ)` — parameterized world initialization from trait vectors + biome config
+- `Step(θ)` — one tick of the hybrid automaton
+- `Render(θ)` — headless 256×256 RGB image (PIL, no browser)
+
+### θ Parameterization (Three Variants)
+
+**EcoRates** (~15 dimensions) — rate multipliers + biome parameters. Answers: "what metabolic tuning produces the most interesting dynamics?"
+
+**EcoTopology** (~50–80 dimensions) — rates + species composition + spatial layout + water sources. Answers: "what ecosystem configurations produce the most diverse dynamics?"
+
+**EcoAdapt** (~550–600 dimensions) — topology + MLP adapter weights. Answers: "what learned behaviors, in what ecological contexts, produce the most lifelike dynamics?"
+
+### FM Evaluation Pipeline
+- CLIP (ViT-B/32) and DINOv2 for embedding rendered simulation frames
+- Three ASAL search modes:
+  - **Supervised target** — "find parameters matching these ecological prompts" (e.g., "thriving meadow" → "overgrazing" → "rain recovery")
+  - **Open-endedness** — maximize trajectory novelty in FM embedding space over long rollouts
+  - **Illumination** — discover maximally diverse set of ecosystem configurations
+- CMA-ES optimization (gradient-free, handles 600-dim search spaces)
+- Physical plausibility constraints (square-cube law, thermal homeostasis limits, trophic sanity)
+
+### Simulation Atlas
+UMAP projection of all discovered ecosystems with rendered thumbnails. "The atlas of possible ecologies" — what does the space of all possible temperate meadows look like?
+
+### Milestone 3 Deliverables
+- Three new species as JSON trait vectors (zero engine code)
+- Updated interaction templates with parameterized mass-ratio windows
+- `examples/temperate_meadow_8sp.json` — 8-species trait-based world
+- Emergent dynamics validation report
+- `search/` directory with own pyproject.toml
+- `search/substrate.py`, `renderer.py`, `evaluator.py`, `search.py`, `theta.py`, `atlas.py`, `constraints.py`
+- `docs/asal_substrate_guide.md`
+
+---
+
+## Pending — Milestone 4: Godot Client + Trained Motion Model
+
+**Goal:** 3D visualization of trait-based ecosystems with latent-driven skeletal animation. Built against the stable trait-based engine from Milestone 2, not the current hand-coded species.
+
+**Why deferred:** The Godot client should be built against the trait-based engine, not the current per-species architecture — building it now means refactoring it after the trait transition. The engine work (Milestones 2–3) generates more interesting content (trophic cascades, FM-discovered ecosystems) than the Godot client would at this stage. The browser visualizer is sufficient for validating all near-term work.
+
+### 3D Assets
+
+1. **Blender models** — low-poly faceted deer (200–400 faces, quadruped_medium rig), butterfly (<50 faces, insect_wing rig), oak tree, grass clump, wildflower. Flat shading, no smoothing. Asset pipeline documented in `LILA_ASSET_PIPELINE_CONTEXT.md`.
+
+### Godot Project
+
+2. **Project scaffolding** — project.godot, autoloads (session_manager, skeleton_registry, event_bus), base_entity.gd.
+3. **WebSocket + tick receiver** — connect to worker, parse packets (5 voxel layers), dispatch to subsystems.
+4. **Position interpolation** — smooth between 10Hz ticks at 60fps render.
+5. **Motion retargeter** — latent vector → bone transforms via per-bone weight matrix. `R_final(bone) = R_base + Σ(latent[i] × W[bone][i])`. This is the thesis demo.
+6. **Voxel renderer** — ImageTexture3D for moisture layer, ground plane shader. Optional soil health overlay (nutrients_slow as subtle gradient).
+7. **Event particles** — CONSUMPTION (leaf burst), POLLINATION (golden trail), RAIN (droplets).
+8. **Water rendering** — shader-based pond with dynamic radius from tick packets.
+
+### Trained Motion Model
+
+9. **Motion data acquisition** — source animation clips for deer locomotion (walk, trot, graze, drink, rest) and butterfly flight (cruise, hover, land).
+10. **Feature extraction** — `training/scripts/extract_features.py`: animation clips → context→motion training pairs.
+11. **Training** — `training/scripts/train.py`: PyTorch training loop targeting the MLP architecture (10→16→12→8→4). Context spec from trait-based engine (richer context vectors than v0.0.1).
+12. **Evaluation** — `training/scripts/evaluate.py`: latent space visualization, reconstruction quality.
+13. **Weight export** — `training/scripts/export_weights.py`: PyTorch → ecosim JSON format.
+14. **Integration** — load trained weights in demo world, compare against static/random adapters.
+
+### Server
+
+15. **Minimal gateway** — FastAPI, accepts WS connections, proxies to worker. `SessionOrchestrator` protocol + `LocalOrchestrator`. Proves multi-session architecture.
+
+---
+
+## Future (v0.2+)
+
+### Ecosystem Richness
+- Reproduction with genetic variation (trait inheritance with mutation)
+- Seasonal cycles — temperature/rainfall oscillations driving phenology
+- Multiple biome presets (desert, arctic, tropical) with biome-specific trait constraints
+- L-systems for procedural plant clusters and terrain objects
+
+### Engine Scaling
+- Behavior-level adapter (ML-influenced guard conditions via trait context)
+- Narrative-level adapter (ecosystem-scale intelligence, event injection)
+- Bounded fields for dense actor clusters (insect swarms, grass patches)
+- Spatial hash for O(1) neighbor queries (current brute-force is O(n²))
+- Tick-rate/bandwidth optimization
+
+### ASAL Extensions
+- Video-language FM evaluation (temporal dynamics without frame sampling)
+- 3D FM evaluation (via Godot renderer output)
+- Substrate contribution to ASAL codebase (JAX port of core dynamics, or Python bridge)
+- Cross-substrate comparison: līlā vs Boids vs Lenia on same ASAL search objectives
+- Automated trait vector discovery — FM-guided search for novel functional groups
+
+### World Building
+- Scene editor UI — click to place entities, drag sliders for rates and traits
+- Trait database import from PanTHERIA (mammals), TRY (plants), EltonTraits (diet/foraging)
+
+### Deployment
+- Cloud-agnostic orchestration (ECS/K8s/Fly adapters)
+- Multi-session gateway with Redis session state
+- Spectator mode — read-only WebSocket for observers
+
+---
+
+## Key Gotchas (see docs/lessons_learned.md for details)
+
+1. WebSocket `process_request` signature varies between websockets versions — check return types first.
+2. `elif` chains in Python are exclusive — combine guard conditions with `and` to avoid blocking downstream branches.
+3. Entities must seek targets purposefully, not wander randomly.
+4. Pollination needs cooldowns on flowers, not memory on insects.
+5. Children must inherit parent stress or populations become immortal.
+6. Reproductive drive needs a dead zone between build and decay conditions.
+7. Rain must work at multiple levels (soil, plants, water sources, evaporation suppression) or it's too weak.
+8. Plants should go dormant, not die — root persistence enables recovery.
+9. World randomization must be JSON-driven and opt-in.
+10. Don't use hatchling in Docker — setuptools is pre-installed everywhere.
+11. **(New)** Allometric scaling laws are well-validated for animals but weaker for plants. Keep plant-specific traits (spread_range, spread_mode, root_persistence) as explicit fields rather than deriving from body mass.
+12. **(New)** The two-pool nutrient split must preserve `initialize_from_soil` correctness — all five layers initialized. The original break bug (skipped layers 2–3) was from an `elif` chain; verify with 5 layers.
+
+---
+
+## Design Decisions (Locked)
+
+- **BYOM adapter architecture.** Engine accepts adapters via dict. Three built-in (mlp, static, random). Custom adapters implement `MotorAdapter` protocol.
+- **Model level hierarchy.** Motor (implemented), Behavior (reserved), Narrative (reserved).
+- **ecosim is stdlib-only.** Zero external dependencies in the core package. Trait system, interactions, and trait compiler use only stdlib math + dataclasses.
+- **Docker Compose is the primary path.** Clone, compose up, open browser.
+- **Skeleton mapping is client-side.** Server sends `skeleton_id` + motion latent. Client owns rigs.
+- **Voxel layers: 5.** nutrients_fast, nutrients_slow, moisture, temperature, organic_matter. Updated from 4 → 5 per two-pool nutrient decision.
+- **Motion latent dimensions: 4.** Expandable later.
+- **Grid: 32³ default, cell_size 1.0.**
+- **Tick rate: ~100ms (10 Hz).**
+- **Randomization is opt-in via JSON.** No `"randomize"` key = deterministic positions.
+- **Plants go dormant, not dead.** Root persistence is ecologically accurate and enables recovery narratives.
+- **Solo creative project.** Contributions welcome, creative direction maintained by author.
+- **(New) Trait-based species architecture.** Species defined as functional trait vectors in JSON. Engine derives behavior parameters from allometric scaling laws. Interaction templates handle combinatorics. Per-species engine code is a legacy path.
+- **(New) Two-pool nutrient system.** Fast pool (plant-available, quick turnover) + slow pool (mineralized reserve, long-term soil health). Mineralization, dissolution, and leaching fluxes run per tick. Decomposer entities accelerate mineralization locally.
+- **(New) ASAL substrate compatibility.** Engine exposes Init/Step/Render protocol for FM-guided search over trait space. search/ package has its own dependencies (torch, clip, cma); ecosim core stays clean.
+- **(New) Engine-first priority.** Godot client deferred until trait-based engine is stable. Browser visualizer sufficient for validating trait system, two-pool nutrients, and ASAL search.
+
+---
+
+## Planning Documents
+
+- **TRAIT_TRANSITION_PLAN.md** — Detailed implementation plan for the Phase 1–3 transition from hand-crafted rules to trait-based architecture with ASAL substrate integration. Includes TraitVector schema, allometric derivation functions, interaction template grammar, TraitCompiler design, engine refactor sequence, calibration strategy, and ASAL search loop implementations.
+
+- **TWO_POOL_NUTRIENT_SPEC.md** — Implementation spec for the two-pool nutrient system. Covers pool dynamics equations, rate constants, voxel manager changes (4→5 layers), every engine touchpoint that reads/writes nutrients, rain split ratios, dormancy recovery update, death→organic_matter deposits, timescale analysis for three recovery scenarios, test plan, and backward compatibility.
+
+- **LILA_ASSET_PIPELINE_CONTEXT.md** — AI-generated 3D asset pipeline research. Covers Flux.1 Schnell → BiRefNet → Hunyuan 3D v2.1 pipeline, deer mesh prototype results, rigging plan. Relevant to Milestone 4 (Godot client).
+
+---
+
+## Key References
+
+**Ecological theory:**
+- Kleiber, M. (1932). Body size and metabolism. *Hilgardia*. — BMR = B₀ × M^0.75
+- Brown, J.H. et al. (2004). Toward a metabolic theory of ecology. *Ecology*. — Metabolic Theory of Ecology
+- Gillooly, J.F. et al. (2001). Effects of size and temperature on metabolic rate. *Science*. — Ectotherm scaling exponent 0.69
+- Peters, R.H. (1983). *The Ecological Implications of Body Size*. Cambridge. — Movement speed scaling
+- Harfoot, M.B.J. et al. (2014). Emergent global patterns from a mechanistic general ecosystem model. *PLoS Biology*. — The Madingley Model
+
+**ALife/search:**
+- Kumar, A. et al. (2024). Automating the Search for Artificial Life with Foundation Models. *Artificial Life* (MIT Press). — ASAL framework: FM-guided search across ALife substrates
+- Project page: https://asal.sakana.ai/ — Code: https://github.com/SakanaAI/asal
+
+**Allometric scaling:**
+- Hirt, M.R. et al. (2017). A general scaling law reveals why the largest animals are not the fastest. *Nature Ecology & Evolution*. — Hump-shaped speed-mass relationship
+- McNab, B.K. (1963). Bioenergetics and the determination of home range size. *American Naturalist*. — Home range ∝ M^0.75
+- Dudley, R. (2000). *The Biomechanics of Insect Flight*. Princeton. — Insect flight speed scaling
+
+---
+
+## Project Links
+
+- **GitHub:** https://github.com/hellolifeforms/lila
+- **Substack essay:** https://postcorporate.substack.com/p/the-unseen-hand
+- **Series:** "The Geometry Beneath" on postcorporate.substack.com
+- **Bluesky:** https://bsky.app/profile/hellolifeforms.bsky.social
+- **līlā concept:** https://www.embodiedphilosophy.com/what-is-lila/
+- **ASAL:** https://asal.sakana.ai/
+- **Madingley Model:** https://journals.plos.org/plosbiology/article?id=10.1371/journal.pbio.1001841
+
+---
+
+## Performance
+
+Worker benchmarks (23 entities, 32³ grid):
+- Step time: 0.60–0.83ms per tick
+- Throughput: 1200–1680 Hz (120× headroom above 10Hz target)
+- Browser viz: 60fps with tick interpolation
+- Docker image: ~50MB (python:3.12-slim + websockets)
+
+**Performance note for Milestone 2:** The trait compiler runs once at init, not per tick. Per-tick lookups into DerivedParams are dict access — O(1). Two-pool nutrient fluxes add three multiply-and-clamp operations per active voxel cell per tick. Expected impact: negligible relative to the ~1ms step time budget.
