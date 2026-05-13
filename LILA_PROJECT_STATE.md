@@ -32,7 +32,7 @@ The name comes from the Sanskrit concept of [līlā](https://www.embodiedphiloso
 ┌─────────────────────────┐
 │    Browser Visualizer   │  ← v0.0.1-alpha (shipped, single HTML file)
 │    Godot 4.x Client     │  ← deferred to Milestone 4
-│    Headless Renderer    │  ← Milestone 3 (for ASAL search)
+│    Headless Renderer    │  ← Shipped (PIL, 256×256, for ASAL search)
 └──────────┬──────────────┘
            │ WebSocket (delta-encoded tick packets)
 ┌──────────▼──────────────┐
@@ -58,11 +58,16 @@ The name comes from the Sanskrit concept of [līlā](https://www.embodiedphiloso
 └──────────────────────────────────────────────────────┘
            │
 ┌──────────▼───────────────────────────────────────────┐
-│    search/ (Milestone 3, separate package)           │
-│    ASAL Substrate Protocol (Init/Step/Render)        │
-│    FM Evaluator (CLIP/DINOv2)                        │
-│    CMA-ES Search (target, open-ended, illumination)  │
-│    Simulation Atlas Visualization                    │
+│    search/ (Shipped — Track A, rate-tuning search)   │
+│    ASAL Substrate Protocol (Init/Step/Render)    ✅  │
+│    Headless PIL Renderer (256×256)                ✅  │
+│    CLIP ViT-B/32 Evaluator                       ✅  │
+│    Illumination Search (diversity GA)            ✅  │
+│    Simulation Atlas (UMAP + grid sampling)       ✅  │
+│    ─────────────────────────────────────────────────  │
+│    Target Search (CMA-ES + text prompts)      pending │
+│    Open-Ended Search (temporal novelty)       pending │
+│    Trait-Based θ Expansion (Milestone 2 dep)  pending │
 └──────────────────────────────────────────────────────┘
 ```
 
@@ -109,19 +114,23 @@ lila/
 │   │   └── index.html              # canvas-based 2D ecosystem visualizer
 │   └── godot/                      # [M4] Godot 4.x client
 │
-├── search/                         # [M3] ASAL substrate + search
-│   ├── pyproject.toml              # deps: torch, clip, cma, umap, pillow
-│   ├── substrate.py                # ALifeSubstrate protocol + LilaSubstrate
-│   ├── renderer.py                 # headless PIL renderer (256×256)
-│   ├── evaluator.py                # FM evaluation (CLIP, DINOv2)
-│   ├── search.py                   # supervised, open-ended, illumination
-│   ├── theta.py                    # θ parameterization (EcoRates/Topology/Adapt)
-│   ├── atlas.py                    # simulation atlas UMAP visualization
-│   ├── constraints.py              # physical plausibility validation
-│   └── examples/
-│       ├── search_target.py
-│       ├── search_openended.py
-│       └── search_illuminate.py
+├── search/                         # ASAL substrate + search (shipped Track A)
+│   ├── pyproject.toml              # deps: torch, open-clip, cma, umap, pillow
+│   ├── lila_search/
+│   │   ├── __init__.py
+│   │   ├── substrate.py            # LilaSubstrate: Init/Step/Render protocol
+│   │   ├── renderer.py             # headless PIL renderer (256×256)
+│   │   ├── theta.py                # θ parameterization (17-dim EcoRates)
+│   │   ├── evaluator.py            # CLIP ViT-B/32 embedding
+│   │   ├── illumination.py         # diversity GA with farthest-point selection
+│   │   └── viz/
+│   │       └── atlas.py            # UMAP projection + grid-sampled atlas
+│   ├── scripts/
+│   │   └── run_illumination.py     # CLI entry point
+│   └── tests/
+│       ├── test_theta.py           # θ spec + world config generation
+│       ├── test_renderer.py        # headless renderer (mock engine)
+│       └── test_substrate.py       # integration tests (requires ecosim)
 │
 ├── training/                       # ML training pipeline (not core)
 │   ├── pyproject.toml
@@ -328,6 +337,26 @@ Five species, two skeletons, five interaction chains:
 19. ✅ World randomization (D4 transforms, jitter, extra plants)
 20. ✅ `docs/lessons_learned.md`
 
+### Milestone — ASAL Search Track A ✅
+
+21. ✅ Headless PIL renderer — engine state → 256×256 RGB numpy array
+22. ✅ θ parameterization — 17-dim EcoRates (rate multipliers, biome, water, entity counts, rain)
+23. ✅ `theta_to_world_config()` — flat vector → valid `demo_world.json` format
+24. ✅ `LilaSubstrate` — ASAL Init(θ)/Step/Render protocol wrapping EcosystemEngine
+25. ✅ `CLIPEvaluator` — CLIP ViT-B/32 embedding with batched multi-rollout support
+26. ✅ Illumination search — diversity-driven GA, farthest-point selection, configurable population/generations
+27. ✅ Parallel CPU rollouts via ProcessPoolExecutor (`--workers N`)
+28. ✅ Simulation atlas — UMAP projection + grid-sampled thumbnail composite
+29. ✅ Diversity curve + embedding scatter visualizations
+30. ✅ CLI entry point (`run_illumination.py`) with full arg parsing
+31. ✅ Unit tests (test_theta, test_renderer with mock engine) — 23 tests passing
+32. ✅ Integration tests (test_substrate, requires ecosim) — 5 tests passing
+33. ✅ First illumination run: 64 pop, 100 gen, 2000-tick rollouts, RTX 5060 Ti, ~100 min
+34. ✅ Diversity climbed 0.005 → 0.022 (min NN dist), mean NN dist still rising at termination
+35. ✅ Atlas shows distinct ecological regimes: drought-stressed, deer explosions, plant-dominated, balanced
+36. ✅ README updated with search section, atlas image, roadmap reflects shipped search
+37. ✅ `search/` package with own pyproject.toml, uv workflow, .gitignore for results/
+
 ---
 
 ## Pending — Milestone 2: Trait-Based Architecture + Two-Pool Nutrients
@@ -408,9 +437,11 @@ Express deer, butterfly, oak, meadow grass, wildflower as TraitVectors in JSON. 
 
 ---
 
-## Pending — Milestone 3: New Species + ASAL Substrate
+## Pending — Milestone 3: New Species + Trait-Based Search
 
-**Goal:** Validate the trait architecture by adding three species with zero engine code. Build the ASAL substrate protocol and FM-guided search pipeline.
+**Goal:** Validate the trait architecture by adding three species with zero engine code. Expand the ASAL search pipeline from rate-tuning (Track A, shipped) to trait-based search (Track B).
+
+**Dependencies:** Milestone 2 (trait system) must ship first. Track A search infrastructure is complete and stable.
 
 **Reference documents:** `TRAIT_TRANSITION_PLAN.md` (Phases 2–3)
 
@@ -431,40 +462,31 @@ With 8 species, run 10,000-tick simulations documenting which interaction chains
 - Cross-trophic competition: songbirds and butterflies competing for fruiting flowers
 - Thermal range exclusions in extreme biome settings
 
-### ASAL Substrate Protocol
+### Trait-Based Search (Track B)
 
-Formalize līlā as an ASAL-compatible substrate with the three-function interface:
-- `Init(θ)` — parameterized world initialization from trait vectors + biome config
-- `Step(θ)` — one tick of the hybrid automaton
-- `Render(θ)` — headless 256×256 RGB image (PIL, no browser)
+Expand the shipped search pipeline from 17-dim rate tuning to trait-space search:
 
-### θ Parameterization (Three Variants)
+**θ expansion** — `theta.py` grows to encode trait vectors (body masses, diet types, thermal tolerances, locomotion modes) alongside the existing rate/biome dimensions. `theta_to_world_config()` emits `species_definitions` for the trait compiler.
 
-**EcoRates** (~15 dimensions) — rate multipliers + biome parameters. Answers: "what metabolic tuning produces the most interesting dynamics?"
+**Three θ variants:**
+- **EcoRates** (~17 dimensions, shipped) — rate multipliers + biome. "What tuning produces interesting dynamics?"
+- **EcoTopology** (~50–80 dimensions) — rates + species composition + trait vectors. "What organisms produce interesting ecologies?"
+- **EcoAdapt** (~550–600 dimensions) — topology + MLP adapter weights. "What learned behaviors produce the most lifelike dynamics?"
 
-**EcoTopology** (~50–80 dimensions) — rates + species composition + spatial layout + water sources. Answers: "what ecosystem configurations produce the most diverse dynamics?"
+**Target search** — CMA-ES optimization toward text prompts via CLIP text embedding. Warm-start from illumination results.
 
-**EcoAdapt** (~550–600 dimensions) — topology + MLP adapter weights. Answers: "what learned behaviors, in what ecological contexts, produce the most lifelike dynamics?"
+**Open-ended search** — maximize temporal novelty in CLIP embedding space over long rollouts. Find ecosystems that don't reach equilibrium.
 
-### FM Evaluation Pipeline
-- CLIP (ViT-B/32) and DINOv2 for embedding rendered simulation frames
-- Three ASAL search modes:
-  - **Supervised target** — "find parameters matching these ecological prompts" (e.g., "thriving meadow" → "overgrazing" → "rain recovery")
-  - **Open-endedness** — maximize trajectory novelty in FM embedding space over long rollouts
-  - **Illumination** — discover maximally diverse set of ecosystem configurations
-- CMA-ES optimization (gradient-free, handles 600-dim search spaces)
-- Physical plausibility constraints (square-cube law, thermal homeostasis limits, trophic sanity)
-
-### Simulation Atlas
-UMAP projection of all discovered ecosystems with rendered thumbnails. "The atlas of possible ecologies" — what does the space of all possible temperate meadows look like?
+**Physical plausibility constraints** — square-cube law, thermal homeostasis limits, trophic sanity checks on θ.
 
 ### Milestone 3 Deliverables
 - Three new species as JSON trait vectors (zero engine code)
 - Updated interaction templates with parameterized mass-ratio windows
 - `examples/temperate_meadow_8sp.json` — 8-species trait-based world
 - Emergent dynamics validation report
-- `search/` directory with own pyproject.toml
-- `search/substrate.py`, `renderer.py`, `evaluator.py`, `search.py`, `theta.py`, `atlas.py`, `constraints.py`
+- Expanded `theta.py` with EcoTopology and EcoAdapt variants
+- `lila_search/target.py` — CMA-ES target search
+- `lila_search/open_ended.py` — temporal novelty search
 - `docs/asal_substrate_guide.md`
 
 ---
