@@ -192,6 +192,10 @@ and population data.
 **Creative exploration** — just watch. There's no win condition.
 The world plays as itself.
 
+**Artificial life research** — an ASAL-compatible substrate with
+ecological semantics. Search for interesting ecosystems using
+foundation models, not hand-tuning.
+
 ## The 0.1-alpha ecosystem
 
 The current demo runs a temperate meadow with five species:
@@ -234,6 +238,16 @@ lila/
 │   │   └── adapters/        # Built-in motor models
 │   ├── examples/            # Demo world definitions
 │   └── tests/
+├── search/
+│   ├── lila_search/         # ASAL-compatible search (see below)
+│   │   ├── substrate.py     # Init/Step/Render protocol
+│   │   ├── renderer.py      # Headless PIL renderer
+│   │   ├── theta.py         # Parameter space definition
+│   │   ├── evaluator.py     # CLIP embedding
+│   │   ├── illumination.py  # Diversity-driven GA
+│   │   └── viz/atlas.py     # UMAP atlas visualization
+│   ├── scripts/             # CLI entry points
+│   └── tests/
 ├── client/
 │   ├── browser/             # Canvas-based 2D visualizer
 │   └── godot/               # 3D client (in development)
@@ -261,6 +275,47 @@ For the full argument, see
 ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand)
 on Substack.
 
+## Ecosystem search
+
+līlā is also an [ASAL](https://asal.sakana.ai/)-compatible substrate
+for foundation-model-guided ecosystem search. The engine wraps in a
+standard Init(θ)/Step(θ)/Render(θ) protocol; a headless renderer
+produces frames; CLIP embeds them; a diversity-driven genetic algorithm
+discovers maximally varied ecosystem configurations.
+
+The first illumination run searched a 17-dimensional parameter space —
+rate multipliers, biome conditions, entity counts, water configuration —
+across 64 populations for 100 generations, each rolling out 2000 ticks
+with 20 CLIP-embedded frames. The result is a simulation atlas: a map
+of ecologically distinct worlds discovered by the search, projected
+into 2D with UMAP.
+
+![Simulation atlas](docs/assets/atlas.png)
+
+Each tile is a different ecosystem found by the search — drought-stressed
+sparse worlds, deer population explosions, plant-dominated high-moisture
+meadows, balanced mixed communities. None were hand-designed. The search
+found them by maximizing diversity in CLIP embedding space.
+
+This is currently rate tuning over five fixed species. The next step
+is trait-based search, where θ encodes body masses, diets, and thermal
+tolerances, and the engine derives behavior allometrically. The search
+becomes "what organisms produce the most interesting ecologies?" — not
+"what tuning of the same organisms looks different?" For more on the
+connection between ecological substrates and artificial life search, see
+["Life as It Could Be"](https://postcorporate.substack.com/p/life-as-it-could-be).
+
+```bash
+# Run illumination search
+cd search && uv sync
+uv run python -m scripts.run_illumination \
+    --pop-size 64 --generations 100 --steps 2000 --frames 20 \
+    --workers 4 -o results/illuminate
+```
+
+See [search/README.md](search/README.md) for setup, output format,
+and analysis recipes.
+
 ## Roadmap
 
 The current engine encodes ecological knowledge as **per-species rules** —
@@ -277,30 +332,23 @@ means writing a JSON trait vector, not new Python code. The interaction
 templates (herbivory, predation, pollination, decomposition) handle the
 combinatorics.
 
-This also makes līlā a compelling **substrate for automated search**.
-Recent work on [Automated Search for Artificial Life](https://asal.sakana.ai/)
-(ASAL) uses foundation models to discover interesting simulations across
-substrates like Boids, Particle Life, and Lenia. Those substrates produce
-visually interesting emergence, but the emergence has no ecological
-semantics — a Lenia pattern that looks like a cell isn't modeling nutrient
-uptake. līlā's trait-based engine would be a substrate where the search
-space is biologically meaningful: "what community of trait-defined
-organisms produces the most open-ended dynamics on this biome?" is a
-question with real ecological content.
+**Shipped:**
+- ASAL substrate protocol — Init(θ)/Step(θ)/Render(θ) wrapping ecosim
+- Headless renderer for FM-guided evaluation (PIL, 256×256)
+- Illumination search — diversity-driven GA with CLIP ViT-B/32
+- Simulation atlas — UMAP projection of discovered ecosystems
 
 **Near-term:**
 - Trait-based species definitions (body mass → derived behavior)
+- Trait-based search — θ encodes organism traits, not just rate multipliers
 - Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition)
 - New species by JSON trait vector only — wolf, songbird, decomposer fungi
-- Headless renderer for FM-guided evaluation
+- Target search — CMA-ES optimization toward text prompts via CLIP
 
 **Medium-term:**
-- ASAL substrate protocol (Init/Step/Render interface)
-- FM-guided ecosystem search (CMA-ES over trait space, CLIP evaluation)
-- Simulation atlas — UMAP of discovered ecosystem configurations
+- Searchable physics — allometric exponents as θ dimensions
 - Godot 3D client with latent-driven skeletal animation
-
-See [LILA_PROJECT_STATE.md](LILA_PROJECT_STATE.md) for detailed milestones.
+- Open-ended search — temporal novelty across simulation rollouts
 
 ## Contributing
 
@@ -315,8 +363,10 @@ līlā is in early alpha. Contributions welcome — especially:
   there's real work here
 - **Client work** — the Godot client needs skeleton rigs, shaders,
   and scene work
-- **ALife/search integration** — if you've worked with ASAL, Lenia,
-  or similar frameworks, the substrate protocol is being designed
+- **ALife/search integration** — the ASAL substrate protocol is working.
+  Target search, open-ended search, and trait-based θ expansion are next.
+  If you've worked with ASAL, Lenia, or similar frameworks, there's real
+  work here
 - **Bug reports** — the [known issues](docs/lessons_learned.md) are
   documented, but there are certainly more
 
