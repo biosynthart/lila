@@ -1,0 +1,37 @@
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[project]
+name = "lila-search"
+version = "0.1.0-dev"
+description = "ASAL-compatible search over līlā ecosystem simulations"
+requires-python = ">=3.11"
+license = {text = "Apache-2.0"}
+authors = [{ name = "BioSynthArt Studios LLC" }]
+dependencies = [
+    "lila-ecosim @ file:///${PROJECT_ROOT}/../server",    
+    "numpy>=1.24",
+    "Pillow>=10.0",
+    "torch>=2.0",
+    "open-clip-torch>=2.24",
+    "cma>=3.3",
+    "umap-learn>=0.5",
+    "matplotlib>=3.7",
+    "tqdm>=4.65",
+]
+
+[project.optional-dependencies]
+dev = ["pytest>=7.0", "ruff>=0.1"]
+
+[project.scripts]
+lila-illuminate = "scripts.run_illumination:main"
+
+[tool.setuptools.packages.find]
+include = ["lila_search*"]
+
+[tool.ruff]
+line-length = 100
+
+[tool.pytest.ini_options]
+testpaths = ["tests"]

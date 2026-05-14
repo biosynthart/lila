@@ -105,6 +105,11 @@ class SimulationSession:
         self._running = False
         self._paused = False
 
+        # Auto-rain from world config (used by search replay)
+        rain_cfg = world_config.get("rain", {})
+        self._auto_rain_interval = rain_cfg.get("interval", 0)
+        self._auto_rain_intensity = rain_cfg.get("intensity", 0.8)
+
         # Stats
         self.ticks_completed = 0
         self.total_step_time = 0.0
@@ -145,6 +150,17 @@ class SimulationSession:
 
         self.ticks_completed += 1
         self.total_step_time += elapsed
+
+        # Auto-rain from world config (search replay)
+        if (self._auto_rain_interval > 0
+                and self.ticks_completed > 0
+                and self.ticks_completed % self._auto_rain_interval == 0):
+            self.engine.apply_rain(self._auto_rain_intensity)
+            logger.debug(
+                "Auto-rain at tick %d (interval=%d, intensity=%.1f)",
+                self.engine.tick, self._auto_rain_interval,
+                self._auto_rain_intensity,
+            )
 
         return packet
 
