@@ -98,13 +98,18 @@ To stop: `docker compose down`
     │              flow equations + guards     │
     │              hysteresis on transitions   │
     │                                          │
+    │   traits ── species as trait vectors     │
+    │             allometric derivation        │
+    │             interaction templates        │
+    │                                          │
     │   adapters ─ BYOM motor models           │
     │              mlp / static / random       │
     │              ...or bring your own        │
     │                                          │
-    │   voxels ─── sparse 3D grid              │
-    │              nutrients, moisture,        │
-    │              temperature, organic matter │
+    │   voxels ─── sparse 3D grid (5 layers)   │
+    │              nutrients_fast, slow,       │
+    │              moisture, temperature,      │
+    │              organic matter              │
     └──────────────────────────────────────────┘
 ```
 
@@ -198,15 +203,20 @@ foundation models, not hand-tuning.
 
 ## The 0.1-alpha ecosystem
 
-The current demo runs a temperate meadow with five species:
+The current demo runs a temperate meadow with **eight species defined via trait vectors**:
 
 | Species      | Type   | Role                                     |
 |--------------|--------|------------------------------------------|
-| Deer         | ANIMAL | Grazes grass, drinks from moisture-rich soil |
-| Butterfly    | INSECT | Pollinates fruiting wildflowers          |
+| Deer         | ANIMAL | Grazer, seeks grass → flowers → water → mates |
+| Butterfly    | INSECT | Pollinator, seeks fruiting wildflowers          |
 | Oak tree     | TREE   | Anchors the scene, creates shade and nutrient gradients |
 | Meadow grass | PLANT  | Ground cover, fast-growing grazing target |
 | Wildflower   | PLANT  | Blooms when healthy, attracts butterflies |
+| Wolf         | ANIMAL | Predator — completes food chain (grass → deer → wolf) |
+| Songbird     | BIRD   | Insectivore + frugivore — new trophic niche |
+| Mushroom     | MICROORGANISM | Decomposer — closes the nutrient loop |
+
+All species behavior is **derived from functional traits** using allometric scaling laws (Kleiber's Law, metabolic theory of ecology). Adding a new species requires only a JSON trait vector — no engine code changes. Interaction templates (herbivory, predation, pollination, decomposition) handle the combinatorics automatically.
 
 Three interaction chains emerge without scripting:
 
@@ -297,11 +307,7 @@ sparse worlds, deer population explosions, plant-dominated high-moisture
 meadows, balanced mixed communities. None were hand-designed. The search
 found them by maximizing diversity in CLIP embedding space.
 
-This is currently rate tuning over five fixed species. The next step
-is trait-based search, where θ encodes body masses, diets, and thermal
-tolerances, and the engine derives behavior allometrically. The search
-becomes "what organisms produce the most interesting ecologies?" — not
-"what tuning of the same organisms looks different?" For more on the
+This is currently rate tuning over five fixed species. The **trait-based architecture** (shipped) enables the next step: θ encodes body masses, diets, and thermal tolerances, and the engine derives behavior allometrically. The search becomes "what organisms produce the most interesting ecologies?" — not "what tuning of the same organisms looks different?" For more on the
 connection between ecological substrates and artificial life search, see
 ["Life as It Could Be"](https://postcorporate.substack.com/p/life-as-it-could-be).
 
@@ -318,31 +324,23 @@ and analysis recipes.
 
 ## Roadmap
 
-The current engine encodes ecological knowledge as **per-species rules** —
-each species has hand-tuned guard thresholds, hard-coded interaction logic,
-and type-specific flow equations. This works for five species. It won't
-scale to fifty.
-
-The next major architecture shift replaces species-specific rules with
-**functional traits and allometric scaling**. A species becomes a point
-in trait space — body mass, diet type, metabolic class, locomotion mode —
-and the engine derives all behavior parameters from established ecological
-scaling laws (Kleiber's Law, metabolic theory of ecology). Adding a wolf
-means writing a JSON trait vector, not new Python code. The interaction
-templates (herbivory, predation, pollination, decomposition) handle the
-combinatorics.
+The engine has transitioned from hand-crafted per-species rules to a **trait-based architecture** using allometric scaling laws. Species are defined as functional trait vectors in JSON — body mass, diet type, metabolic class, locomotion mode — and the engine derives all behavior parameters from established ecological scaling laws (Kleiber's Law, metabolic theory of ecology). Adding a wolf means writing a JSON trait vector, not new Python code.
 
 **Shipped:**
+- Trait-based species architecture — body mass → derived behavior via allometric scaling
+- Interaction templates — herbivory, predation, pollination, decomposition (parameterized, no per-species code)
+- Trait compiler — runs once at init, produces DerivedParams + interaction matrix for the engine
+- 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
 - ASAL substrate protocol — Init(θ)/Step(θ)/Render(θ) wrapping ecosim
 - Headless renderer for FM-guided evaluation (PIL, 256×256)
 - Illumination search — diversity-driven GA with CLIP ViT-B/32
 - Simulation atlas — UMAP projection of discovered ecosystems
 
 **Near-term:**
-- Trait-based species definitions (body mass → derived behavior)
+- Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition) — *next*
+- Calibration & regression testing (2000-tick baseline comparison)
+- Emergent dynamics validation with 8 species (trophic cascades, Lotka-Volterra oscillations)
 - Trait-based search — θ encodes organism traits, not just rate multipliers
-- Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition)
-- New species by JSON trait vector only — wolf, songbird, decomposer fungi
 - Target search — CMA-ES optimization toward text prompts via CLIP
 
 **Medium-term:**
@@ -372,8 +370,10 @@ līlā is in early alpha. Contributions welcome — especially:
 
 ## Acknowledgments
 
-līlā was co-developed with [Claude](https://claude.ai), Anthropic's AI assistant —
-from architecture design through simulation tuning to documentation.
+līlā was co-developed with multiple AI systems:
+- **[Pi.dev](https://pi.dev)** — coding agent for implementation, refactoring, and project state tracking
+- **[Claude](https://claude.ai)** (Anthropic) — architecture design, simulation tuning, documentation
+- **[Qwen3.6-27B-MTP-GGUF](https://github.com/unslothai/unsloth)** via [Unsloth](https://github.com/unslothai/unsloth) — local reasoning and code review
 
 ## License
 
