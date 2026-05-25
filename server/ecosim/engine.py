@@ -63,12 +63,11 @@ import random
 from typing import Any
 
 from .biome import BiomeConfig, get_biome_config
-from .entities import init_entity, is_alive, is_mobile
+from .entities import init_entity, is_alive
 from .model_adapter import MotorAdapter, build_context
-from .trait_compiler import compile_world, CompiledEcology, LegacyParams
+from .trait_compiler import LegacyParams, compile_world
 from .traits import DerivedParams
 from .voxel_manager import VoxelManager
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Universal Simulation Constants
@@ -1677,10 +1676,14 @@ class EcosystemEngine:
 
         def transform_pos(pos):
             x, z = pos[0] - center, pos[2] - center
-            if rotation == 90: x, z = -z, x
-            elif rotation == 180: x, z = -x, -z
-            elif rotation == 270: x, z = z, -x
-            if flip_x: x = -x
+            if rotation == 90:
+                x, z = -z, x
+            elif rotation == 180:
+                x, z = -x, -z
+            elif rotation == 270:
+                x, z = z, -x
+            if flip_x:
+                x = -x
             return self._clamp_to_grid([x + center, 0.0, z + center])
 
         for e in self.entities.values():

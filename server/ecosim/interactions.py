@@ -18,11 +18,9 @@
 
 from __future__ import annotations
 
-from dataclasses import dataclass, field
-from typing import Optional
+from dataclasses import dataclass
 
 from .traits import TraitVector
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Predation mass-ratio windows by diet category

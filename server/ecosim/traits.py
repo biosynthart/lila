@@ -15,8 +15,6 @@ from __future__ import annotations
 
 import math
 from dataclasses import dataclass, field
-from typing import Optional
-
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Calibration Constants
@@ -88,9 +86,9 @@ class TraitVector:
     entity_class: str
     body_mass_kg: float
     locomotion: str
-    skeleton_id: Optional[str] = None
+    skeleton_id: str | None = None
     thermoregulation: str = "endotherm"
-    mass_specific_bmr: Optional[float] = None
+    mass_specific_bmr: float | None = None
     diet_type: str = "herbivore"
     diet_breadth: list[str] = field(default_factory=list)
     trophic_level: float = 2.0
@@ -102,14 +100,14 @@ class TraitVector:
     shade_tolerance: float = 0.3
     sensory_range_multiplier: float = 1.0
     movement_budget: float = 0.4
-    spread_mode: Optional[str] = None
-    spread_range: Optional[float] = None
-    spread_chance: Optional[float] = None
-    spread_cooldown: Optional[int] = None
+    spread_mode: str | None = None
+    spread_range: float | None = None
+    spread_chance: float | None = None
+    spread_cooldown: int | None = None
     root_persistence: bool = False
-    canopy_radius: Optional[float] = None
+    canopy_radius: float | None = None
     resource_tags: list[str] = field(default_factory=list)
-    pollination_syndrome: Optional[str] = None
+    pollination_syndrome: str | None = None
     floral_affinity: list[str] = field(default_factory=list)
 
     @property
@@ -164,12 +162,12 @@ class DerivedParams:
     clutch_size: int
     generation_time_ticks: int
     parent_energy_cost: float
-    spread_mode: Optional[str] = None
-    spread_range: Optional[float] = None
+    spread_mode: str | None = None
+    spread_range: float | None = None
     spread_chance: float = 0.0
     spread_cooldown: int = 0
     root_persistence: bool = False
-    canopy_radius: Optional[float] = None
+    canopy_radius: float | None = None
     thermal_range: tuple[float, float] = (0.0, 40.0)
     drought_tolerance: float = 0.3
     functional_group: str = ""
@@ -177,9 +175,9 @@ class DerivedParams:
     diet_breadth: list[str] = field(default_factory=list)
     resource_tags: list[str] = field(default_factory=list)
     locomotion: str = ""
-    skeleton_id: Optional[str] = None
+    skeleton_id: str | None = None
     trophic_level: float = 2.0
-    pollination_syndrome: Optional[str] = None
+    pollination_syndrome: str | None = None
     floral_affinity: list[str] = field(default_factory=list)
 
 

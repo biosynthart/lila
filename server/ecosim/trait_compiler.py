@@ -18,26 +18,18 @@
 from __future__ import annotations
 
 from dataclasses import dataclass, field
-from typing import Optional
 
-from .traits import (
-    TraitVector,
-    DerivedParams,
-    derive_all,
-    derive_metabolic_rate,
-    parse_species_definitions,
-    trait_vector_from_dict,
-)
 from .interactions import (
-    InteractionParams,
-    InteractionTemplate,
-    Herbivory,
-    Predation,
-    Pollination,
-    Decomposition,
     ALL_TEMPLATES,
+    Decomposition,
+    InteractionParams,
 )
-
+from .traits import (
+    DerivedParams,
+    TraitVector,
+    derive_all,
+    parse_species_definitions,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Compiled Output
@@ -76,7 +68,7 @@ class CompiledEcology:
     # Sorted by preference (lower = preferred food source)
     diet_preferences: dict[str, list[tuple[str, int]]] = field(default_factory=dict)
 
-    def get_params(self, species_id: str) -> Optional[DerivedParams]:
+    def get_params(self, species_id: str) -> DerivedParams | None:
         """Get derived params for a species, or None if unknown."""
         return self.derived_params.get(species_id)
 
@@ -95,7 +87,7 @@ class CompiledEcology:
     def is_decomposer(self, species_id: str) -> bool:
         return species_id in self.decomposers
 
-    def get_decomposer_params(self, species_id: str) -> Optional[InteractionParams]:
+    def get_decomposer_params(self, species_id: str) -> InteractionParams | None:
         return self.decomposers.get(species_id)
 
 
@@ -124,7 +116,7 @@ class LegacyParams:
         self.diet_preferences: dict = {}
         self.is_legacy = True
 
-    def get_params(self, species_id: str) -> Optional[DerivedParams]:
+    def get_params(self, species_id: str) -> DerivedParams | None:
         return None
 
     def get_interactions(self, actor_id: str, target_id: str) -> list:
@@ -139,7 +131,7 @@ class LegacyParams:
     def is_decomposer(self, species_id: str) -> bool:
         return False
 
-    def get_decomposer_params(self, species_id: str) -> Optional[InteractionParams]:
+    def get_decomposer_params(self, species_id: str) -> InteractionParams | None:
         return None
 
 
@@ -164,7 +156,7 @@ class TraitCompiler:
     """
 
     def __init__(self, trait_vectors: list[TraitVector],
-                 biome_config: Optional[dict] = None):
+                 biome_config: dict | None = None):
         self.trait_vectors = {tv.species_id: tv for tv in trait_vectors}
         self.biome = biome_config or {}
         self._templates = list(ALL_TEMPLATES)
@@ -277,7 +269,7 @@ class TraitCompiler:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compile_world(world_config: dict,
-                  biome_config: Optional[dict] = None) -> CompiledEcology | LegacyParams:
+                  biome_config: dict | None = None) -> CompiledEcology | LegacyParams:
     """Compile a world config into engine-ready parameters.
 
     If the world has species_definitions, compile them. Otherwise return
