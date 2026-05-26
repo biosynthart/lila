@@ -20,12 +20,30 @@
       "ph": 6.8
     },
     "voxel_grid": {
-      "dimensions": [32, 32, 32],
+      "dimensions": [
+        32,
+        32,
+        32
+      ],
       "cell_size": 1.0
     },
     "water_sources": [
-      { "position": [6.0, 0.0, 20.0], "radius": 3.0 },
-      { "position": [25.0, 0.0, 7.0], "radius": 2.0 }
+      {
+        "position": [
+          6.0,
+          0.0,
+          20.0
+        ],
+        "radius": 3.0
+      },
+      {
+        "position": [
+          25.0,
+          0.0,
+          7.0
+        ],
+        "radius": 2.0
+      }
     ]
   },
   "model": {
@@ -42,87 +60,648 @@
   },
   "randomize": {
     "jitter": 1.5,
-    "extra_grass": [0, 4],
-    "extra_flowers": [0, 2],
+    "extra_grass": [
+      0,
+      4
+    ],
+    "extra_flowers": [
+      0,
+      2
+    ],
     "transform": true
   },
   "entities": [
     {
-      "id": "deer_01", "type": "ANIMAL", "species": "deer",
-      "position": [16.0, 0.0, 14.0],
+      "id": "deer_01",
+      "type": "ANIMAL",
+      "species": "deer",
+      "position": [
+        16.0,
+        0.0,
+        14.0
+      ],
       "metadata": {
-        "diet": "herbivore", "body_mass": 60.0, "metabolism_rate": 1.0,
-        "sensory_range": 12.0, "movement_speed": 3.0,
-        "lifespan": 800.0, "reproduction_threshold": 0.8
+        "diet": "herbivore",
+        "body_mass": 60.0,
+        "metabolism_rate": 1.0,
+        "sensory_range": 12.0,
+        "movement_speed": 3.0,
+        "lifespan": 800.0,
+        "reproduction_threshold": 0.8
       },
       "skeleton_id": "quadruped_medium"
     },
     {
-      "id": "deer_02", "type": "ANIMAL", "species": "deer",
-      "position": [20.0, 0.0, 18.0],
+      "id": "deer_02",
+      "type": "ANIMAL",
+      "species": "deer",
+      "position": [
+        20.0,
+        0.0,
+        18.0
+      ],
       "metadata": {
-        "diet": "herbivore", "body_mass": 55.0, "metabolism_rate": 1.1,
-        "sensory_range": 12.0, "movement_speed": 3.2,
-        "lifespan": 800.0, "reproduction_threshold": 0.8
+        "diet": "herbivore",
+        "body_mass": 55.0,
+        "metabolism_rate": 1.1,
+        "sensory_range": 12.0,
+        "movement_speed": 3.2,
+        "lifespan": 800.0,
+        "reproduction_threshold": 0.8
       },
       "skeleton_id": "quadruped_medium"
     },
     {
-      "id": "butterfly_01", "type": "INSECT", "species": "monarch",
-      "position": [10.0, 0.0, 8.0],
+      "id": "butterfly_01",
+      "type": "INSECT",
+      "species": "monarch",
+      "position": [
+        10.0,
+        0.0,
+        8.0
+      ],
       "metadata": {
-        "diet": "herbivore", "colony_size": 1, "metabolism_rate": 0.6,
-        "pollination_range": 6.0, "movement_speed": 2.0, "lifespan": 150.0
+        "diet": "herbivore",
+        "colony_size": 1,
+        "metabolism_rate": 0.6,
+        "pollination_range": 6.0,
+        "movement_speed": 2.0,
+        "lifespan": 150.0
       },
       "skeleton_id": "insect_wing"
     },
     {
-      "id": "butterfly_02", "type": "INSECT", "species": "monarch",
-      "position": [18.0, 0.0, 10.0],
+      "id": "butterfly_02",
+      "type": "INSECT",
+      "species": "monarch",
+      "position": [
+        18.0,
+        0.0,
+        10.0
+      ],
       "metadata": {
-        "diet": "herbivore", "colony_size": 1, "metabolism_rate": 0.6,
-        "pollination_range": 6.0, "movement_speed": 2.0, "lifespan": 150.0
+        "diet": "herbivore",
+        "colony_size": 1,
+        "metabolism_rate": 0.6,
+        "pollination_range": 6.0,
+        "movement_speed": 2.0,
+        "lifespan": 150.0
       },
       "skeleton_id": "insect_wing"
     },
     {
-      "id": "oak_01", "type": "TREE", "species": "meadow_oak",
-      "position": [8.0, 0.0, 8.0],
+      "id": "oak_01",
+      "type": "TREE",
+      "species": "meadow_oak",
+      "position": [
+        8.0,
+        0.0,
+        8.0
+      ],
       "metadata": {
-        "metabolism": "photosynthetic", "growth_rate": 0.005, "root_depth": 2.0,
-        "canopy_radius": 4.0, "height_max": 12.0, "trunk_radius": 0.6,
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.005,
+        "root_depth": 2.0,
+        "canopy_radius": 4.0,
+        "height_max": 12.0,
+        "trunk_radius": 0.6,
         "shade_factor": 0.35,
-        "nutrient_demand": { "nitrogen": 0.02, "phosphorus": 0.01 },
+        "nutrient_demand": {
+          "nitrogen": 0.02,
+          "phosphorus": 0.01
+        },
         "water_demand": 0.05
       }
     },
     {
-      "id": "oak_02", "type": "TREE", "species": "meadow_oak",
-      "position": [24.0, 0.0, 22.0],
+      "id": "oak_02",
+      "type": "TREE",
+      "species": "meadow_oak",
+      "position": [
+        24.0,
+        0.0,
+        22.0
+      ],
       "metadata": {
-        "metabolism": "photosynthetic", "growth_rate": 0.005, "root_depth": 2.0,
-        "canopy_radius": 3.5, "height_max": 10.0, "trunk_radius": 0.5,
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.005,
+        "root_depth": 2.0,
+        "canopy_radius": 3.5,
+        "height_max": 10.0,
+        "trunk_radius": 0.5,
         "shade_factor": 0.3,
-        "nutrient_demand": { "nitrogen": 0.02, "phosphorus": 0.01 },
+        "nutrient_demand": {
+          "nitrogen": 0.02,
+          "phosphorus": 0.01
+        },
         "water_demand": 0.05
       }
     },
-    { "id": "grass_01", "type": "PLANT", "species": "meadow_grass", "position": [12.0, 0.0, 12.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_02", "type": "PLANT", "species": "meadow_grass", "position": [14.0, 0.0, 10.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_03", "type": "PLANT", "species": "meadow_grass", "position": [16.0, 0.0, 16.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_04", "type": "PLANT", "species": "meadow_grass", "position": [18.0, 0.0, 14.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_05", "type": "PLANT", "species": "meadow_grass", "position": [20.0, 0.0, 12.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_06", "type": "PLANT", "species": "meadow_grass", "position": [22.0, 0.0, 16.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_07", "type": "PLANT", "species": "meadow_grass", "position": [10.0, 0.0, 14.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_08", "type": "PLANT", "species": "meadow_grass", "position": [14.0, 0.0, 18.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_09", "type": "PLANT", "species": "meadow_grass", "position": [16.0, 0.0, 20.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_10", "type": "PLANT", "species": "meadow_grass", "position": [20.0, 0.0, 20.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_11", "type": "PLANT", "species": "meadow_grass", "position": [24.0, 0.0, 14.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "grass_12", "type": "PLANT", "species": "meadow_grass", "position": [26.0, 0.0, 18.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.06, "root_depth": 0.1, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.005, "phosphorus": 0.002 }, "water_demand": 0.02 } },
-    { "id": "flower_01", "type": "PLANT", "species": "wildflower", "position": [11.0, 0.0, 6.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.09, "root_depth": 0.15, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.008, "phosphorus": 0.004 }, "water_demand": 0.025 } },
-    { "id": "flower_02", "type": "PLANT", "species": "wildflower", "position": [15.0, 0.0, 8.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.09, "root_depth": 0.15, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.008, "phosphorus": 0.004 }, "water_demand": 0.025 } },
-    { "id": "flower_03", "type": "PLANT", "species": "wildflower", "position": [19.0, 0.0, 9.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.09, "root_depth": 0.15, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.008, "phosphorus": 0.004 }, "water_demand": 0.025 } },
-    { "id": "flower_04", "type": "PLANT", "species": "wildflower", "position": [22.0, 0.0, 11.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.09, "root_depth": 0.15, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.008, "phosphorus": 0.004 }, "water_demand": 0.025 } },
-    { "id": "flower_05", "type": "PLANT", "species": "wildflower", "position": [13.0, 0.0, 11.0], "metadata": { "metabolism": "photosynthetic", "growth_rate": 0.09, "root_depth": 0.15, "canopy_radius": 0.0, "nutrient_demand": { "nitrogen": 0.008, "phosphorus": 0.004 }, "water_demand": 0.025 } }
+    {
+      "id": "grass_01",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        12.0,
+        0.0,
+        12.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_02",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        14.0,
+        0.0,
+        10.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_03",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        16.0,
+        0.0,
+        16.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_04",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        18.0,
+        0.0,
+        14.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_05",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        20.0,
+        0.0,
+        12.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_06",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        22.0,
+        0.0,
+        16.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_07",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        10.0,
+        0.0,
+        14.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_08",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        14.0,
+        0.0,
+        18.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_09",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        16.0,
+        0.0,
+        20.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_10",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        20.0,
+        0.0,
+        20.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_11",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        24.0,
+        0.0,
+        14.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "grass_12",
+      "type": "PLANT",
+      "species": "meadow_grass",
+      "position": [
+        26.0,
+        0.0,
+        18.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.06,
+        "root_depth": 0.1,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.005,
+          "phosphorus": 0.002
+        },
+        "water_demand": 0.02
+      }
+    },
+    {
+      "id": "flower_01",
+      "type": "PLANT",
+      "species": "wildflower",
+      "position": [
+        11.0,
+        0.0,
+        6.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.09,
+        "root_depth": 0.15,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.008,
+          "phosphorus": 0.004
+        },
+        "water_demand": 0.025
+      }
+    },
+    {
+      "id": "flower_02",
+      "type": "PLANT",
+      "species": "wildflower",
+      "position": [
+        15.0,
+        0.0,
+        8.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.09,
+        "root_depth": 0.15,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.008,
+          "phosphorus": 0.004
+        },
+        "water_demand": 0.025
+      }
+    },
+    {
+      "id": "flower_03",
+      "type": "PLANT",
+      "species": "wildflower",
+      "position": [
+        19.0,
+        0.0,
+        9.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.09,
+        "root_depth": 0.15,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.008,
+          "phosphorus": 0.004
+        },
+        "water_demand": 0.025
+      }
+    },
+    {
+      "id": "flower_04",
+      "type": "PLANT",
+      "species": "wildflower",
+      "position": [
+        22.0,
+        0.0,
+        11.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.09,
+        "root_depth": 0.15,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.008,
+          "phosphorus": 0.004
+        },
+        "water_demand": 0.025
+      }
+    },
+    {
+      "id": "flower_05",
+      "type": "PLANT",
+      "species": "wildflower",
+      "position": [
+        13.0,
+        0.0,
+        11.0
+      ],
+      "metadata": {
+        "metabolism": "photosynthetic",
+        "growth_rate": 0.09,
+        "root_depth": 0.15,
+        "canopy_radius": 0.0,
+        "nutrient_demand": {
+          "nitrogen": 0.008,
+          "phosphorus": 0.004
+        },
+        "water_demand": 0.025
+      }
+    }
+  ],
+  "species_definitions": [
+    {
+      "species_id": "deer",
+      "functional_group": "herbivore",
+      "entity_class": "ANIMAL",
+      "body_mass_kg": 80.0,
+      "locomotion": "quadruped",
+      "skeleton_id": "quadruped_medium",
+      "thermoregulation": "endotherm",
+      "diet_type": "herbivore",
+      "diet_breadth": [
+        "graminoid",
+        "forb"
+      ],
+      "trophic_level": 2.0,
+      "reproductive_strategy": "K_selected",
+      "clutch_size": 1,
+      "generation_time_ticks": 5000,
+      "thermal_range": [
+        0,
+        40
+      ],
+      "drought_tolerance": 0.3,
+      "shade_tolerance": 0.3,
+      "sensory_range_multiplier": 1.0,
+      "movement_budget": 0.4,
+      "resource_tags": []
+    },
+    {
+      "species_id": "monarch",
+      "functional_group": "pollinator",
+      "entity_class": "INSECT",
+      "body_mass_kg": 0.0005,
+      "locomotion": "flight_insect",
+      "skeleton_id": "insect_wing",
+      "thermoregulation": "ectotherm",
+      "diet_type": "nectarivore",
+      "diet_breadth": [
+        "forb:fruiting"
+      ],
+      "trophic_level": 2.0,
+      "reproductive_strategy": "r_selected",
+      "clutch_size": 3,
+      "generation_time_ticks": 2000,
+      "thermal_range": [
+        10,
+        35
+      ],
+      "drought_tolerance": 0.1,
+      "shade_tolerance": 0.5,
+      "sensory_range_multiplier": 1.2,
+      "movement_budget": 0.6,
+      "resource_tags": [],
+      "floral_affinity": [
+        "insect_generalist"
+      ]
+    },
+    {
+      "species_id": "meadow_oak",
+      "functional_group": "producer",
+      "entity_class": "TREE",
+      "body_mass_kg": 5000.0,
+      "locomotion": "rooted",
+      "skeleton_id": null,
+      "thermoregulation": "autotroph",
+      "diet_type": "autotroph",
+      "diet_breadth": [],
+      "trophic_level": 1.0,
+      "reproductive_strategy": "K_selected",
+      "clutch_size": 1,
+      "generation_time_ticks": 20000,
+      "thermal_range": [
+        -10,
+        40
+      ],
+      "drought_tolerance": 0.5,
+      "shade_tolerance": 0.2,
+      "sensory_range_multiplier": 0.0,
+      "movement_budget": 0.0,
+      "canopy_radius": 3.0,
+      "root_persistence": true,
+      "resource_tags": [
+        "mast"
+      ]
+    },
+    {
+      "species_id": "meadow_grass",
+      "functional_group": "producer",
+      "entity_class": "PLANT",
+      "body_mass_kg": 0.01,
+      "locomotion": "sessile",
+      "skeleton_id": null,
+      "thermoregulation": "autotroph",
+      "diet_type": "autotroph",
+      "diet_breadth": [],
+      "trophic_level": 1.0,
+      "reproductive_strategy": "r_selected",
+      "clutch_size": 2,
+      "generation_time_ticks": 500,
+      "thermal_range": [
+        5,
+        35
+      ],
+      "drought_tolerance": 0.2,
+      "shade_tolerance": 0.4,
+      "sensory_range_multiplier": 0.0,
+      "movement_budget": 0.0,
+      "spread_mode": "runner",
+      "spread_range": 2.0,
+      "spread_chance": 0.008,
+      "spread_cooldown": 80,
+      "root_persistence": true,
+      "resource_tags": [
+        "graminoid"
+      ]
+    },
+    {
+      "species_id": "wildflower",
+      "functional_group": "producer",
+      "entity_class": "PLANT",
+      "body_mass_kg": 0.05,
+      "locomotion": "sessile",
+      "skeleton_id": null,
+      "thermoregulation": "autotroph",
+      "diet_type": "autotroph",
+      "diet_breadth": [],
+      "trophic_level": 1.0,
+      "reproductive_strategy": "r_selected",
+      "clutch_size": 1,
+      "generation_time_ticks": 800,
+      "thermal_range": [
+        5,
+        35
+      ],
+      "drought_tolerance": 0.15,
+      "shade_tolerance": 0.3,
+      "sensory_range_multiplier": 0.0,
+      "movement_budget": 0.0,
+      "spread_mode": "runner",
+      "spread_range": 3.5,
+      "spread_chance": 0.005,
+      "spread_cooldown": 120,
+      "root_persistence": true,
+      "resource_tags": [
+        "forb"
+      ],
+      "pollination_syndrome": "insect_generalist"
+    }
   ]
 }
