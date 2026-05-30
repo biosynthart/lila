@@ -241,6 +241,9 @@ lila/
 │   ├── ecosim/              # Core simulation (stdlib only)
 │   │   ├── engine.py        # Hybrid automaton
 │   │   ├── entities.py      # Entity schemas
+│   │   ├── traits.py        # Trait definitions
+│   │   ├── trait_compiler.py# Trait → derived params compiler
+│   │   ├── interactions.py  # Interaction templates
 │   │   ├── biome.py         # Biome presets
 │   │   ├── voxel_manager.py # Sparse 3D grid
 │   │   ├── model_adapter.py # BYOM protocol

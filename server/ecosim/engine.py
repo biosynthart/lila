@@ -62,7 +62,9 @@ import math
 import random
 from typing import Any
 
+from .actors import ActorRegistry, InteractionContext, build_interaction_registry
 from .biome import BiomeConfig, get_biome_config
+from .effects import EffectBus
 from .entities import init_entity, is_alive
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import LegacyParams, compile_world
@@ -250,7 +252,7 @@ class EcosystemEngine:
         # If no species_definitions key, returns LegacyParams for backward compat.
         biome_dict = {"name": self.biome_name}
         self.compiled = compile_world(world_config, biome_dict)
-        self._is_legacy = isinstance(self.compiled, LegacyParams)
+
 
         # ── BYOM motor adapter ──
         adapters = adapters or {}
@@ -292,6 +294,13 @@ class EcosystemEngine:
         self._spawns: list[dict[str, Any]] = []
         self._removals: list[str] = []
         self._positions: dict[str, list[float]] = {}
+
+        # ── Effect bus (Phase 1 refactoring) ──
+        self.effect_bus = EffectBus()
+
+        # ── Actor registry (Phase 1 refactoring) ──
+        self.actor_registry = build_interaction_registry(self.compiled)
+        self._is_legacy = isinstance(self.compiled, LegacyParams)
 
         # ── Randomization (opt-in via JSON) ──
         rand_cfg = world_config.get("randomize")
@@ -382,10 +391,32 @@ class EcosystemEngine:
             if is_alive(entity):
                 self._apply_flow(entity, dt)
 
-        # Phase 2: Interactions — entity↔entity events
-        for entity in list(self.entities.values()):
-            if is_alive(entity):
-                self._resolve_interactions(entity)
+        # Phase 2: Interactions — entity↔entity events (actor-based)
+        if self._is_legacy:
+            # Legacy mode: use inline interaction resolution
+            for entity in list(self.entities.values()):
+                if is_alive(entity):
+                    self._resolve_interactions(entity)
+        else:
+            # Actor-based: collect effects, apply atomically
+            interaction_effects = []
+            for entity in list(self.entities.values()):
+                if not is_alive(entity):
+                    continue
+                actor = self.actor_registry.get(entity.get("species"))
+                if actor:
+                    ctx = self._build_interaction_context(entity, dt)
+                    effects = actor.resolve(ctx)
+                    interaction_effects.extend(effects)
+            # Apply interaction effects atomically
+            self.effect_bus.apply_batch(
+                interaction_effects,
+                self.entities,
+                self.voxels,
+                self._spawns,
+                self._removals,
+                self._events,
+            )
 
         # Phase 3: Guards — discrete state transitions
         for entity in list(self.entities.values()):
@@ -412,6 +443,36 @@ class EcosystemEngine:
             self.entities[spawn["id"]] = spawn
 
         return self._build_tick_packet(dt)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Phase 2: Interactions — Entity↔Entity Events (Legacy Path)
+    # ═══════════════════════════════════════════════════════════════════════
+    # This method is kept for backward compatibility with legacy worlds
+    # that don't have species_definitions. New worlds use the actor-based
+    # path in step() instead.
+
+    def _resolve_interactions(self, e: dict[str, Any]) -> None:
+        """Evaluate and resolve all interactions for one entity (legacy).
+
+        Checks flee triggers (predator proximity), predation (catch prey),
+        herbivory (consume plants), and pollination (visit flowers).
+        All interaction parameters come from the compiled interaction matrix.
+        """
+        params = self._get_params(e)
+        if params is None:
+            return
+
+        pos = e["position"]
+
+        # ── Consumer interactions (flee, hunt, graze) ──
+        if params.diet_type not in ("autotroph", "decomposer"):
+            self._resolve_flee(e, params, pos)
+            self._resolve_predation(e, params, pos)
+            self._resolve_herbivory(e, params, pos)
+
+        # ── Pollinator interactions (visit flowers) ──
+        if params.floral_affinity:
+            self._resolve_pollination(e, params, pos)
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 1: Flow — Continuous State Variable Updates
@@ -626,28 +687,52 @@ class EcosystemEngine:
     # The matrix maps (actor_species, target_species) → interaction type and
     # parameters. No per-species interaction code exists in this file.
 
-    def _resolve_interactions(self, e: dict[str, Any]) -> None:
-        """Evaluate and resolve all interactions for one entity.
+    def _build_interaction_context(self, entity: dict[str, Any], dt: float) -> InteractionContext:
+        """Build a read-only interaction context for one entity.
 
-        Checks flee triggers (predator proximity), predation (catch prey),
-        herbivory (consume plants), and pollination (visit flowers).
-        All interaction parameters come from the compiled interaction matrix.
+        Populates nearby_entities from the spatial index using the entity's
+        sensory range. Returns an InteractionContext suitable for actor.resolve().
         """
-        params = self._get_params(e)
+        params = self._get_params(entity)
+        rate_multipliers = {
+            "consumption": self.rate_consumption,
+            "hunger": self.rate_hunger,
+            "thirst": self.rate_thirst,
+            "growth": self.rate_growth,
+            "reproduction": self.rate_reproduction,
+        }
+
         if params is None:
-            return
+            return InteractionContext(
+                tick=self.tick,
+                entity=entity,
+                voxel_grid=self.voxels,
+                biome=self.biome,
+                compiled=self.compiled,
+                params=None,
+                nearby_entities=[],
+                water_sources=self.water_sources,
+                climate=self.climate,
+                rate_multipliers=rate_multipliers,
+            )
 
-        pos = e["position"]
+        # Query nearby entities using spatial index
+        nearby = self._entities_in_range(
+            entity["position"], params.sensory_range, entity["id"]
+        )
 
-        # ── Consumer interactions (flee, hunt, graze) ──
-        if params.diet_type not in ("autotroph", "decomposer"):
-            self._resolve_flee(e, params, pos)
-            self._resolve_predation(e, params, pos)
-            self._resolve_herbivory(e, params, pos)
-
-        # ── Pollinator interactions (visit flowers) ──
-        if params.floral_affinity:
-            self._resolve_pollination(e, params, pos)
+        return InteractionContext(
+            tick=self.tick,
+            entity=entity,
+            voxel_grid=self.voxels,
+            biome=self.biome,
+            compiled=self.compiled,
+            params=params,
+            nearby_entities=nearby,
+            water_sources=self.water_sources,
+            climate=self.climate,
+            rate_multipliers=rate_multipliers,
+        )
 
     def _resolve_flee(self, e: dict, p: DerivedParams, pos: list[float]) -> None:
         """Check for nearby predators and trigger flee response."""
