@@ -40,22 +40,25 @@ The name comes from the Sanskrit concept of [līlā](https://www.embodiedphiloso
 │    (one per session)    │     Serves viz HTML, streams ticks
 └──────────┬──────────────┘
            │
-┌──────────▼───────────────────────────────────────────┐
-│    ecosim (Python package, stdlib only)              │
-│  ┌─────────────────┐  ┌────────────────────────────┐ │
-│  │ Hybrid Automaton│  │ Trait System (Milestone 2) │ │
-│  │ Flow + Guards   │  │ TraitVector + Compiler     │ │
-│  ├─────────────────┤  │ Allometric Derivations     │ │
-│  │ Voxel Manager   │  │ Interaction Templates      │ │
-│  │ 5 layers (M2)   │  ├────────────────────────────┤ │
-│  ├─────────────────┤  │ BYOM Adapters              │ │
-│  │ Water System    │  │ mlp/static/random          │ │
-│  │ Dynamic levels  │  ├────────────────────────────┤ │
-│  ├─────────────────┤  │ World Randomizer           │ │
-│  │ Two-Pool Soil   │  │ D4 transforms              │ │
-│  │ Fast/Slow (M2)  │  └────────────────────────────┘ │
-│  └─────────────────┘                                 │
-└──────────────────────────────────────────────────────┘
+┌──────────▼──────────────────────────────────────────────────────┐
+│    ecosim (Python package, stdlib only)                         │
+│  ┌─────────────────┐  ┌───────────────────────────────────────┐ │
+│  │ Hybrid Automaton│  │ Trait System (Milestone 2)            │ │
+│  │ Flow + Guards   │  │ TraitVector + Compiler                │ │
+│  ├─────────────────┤  │ Allometric Derivations                │ │
+│  │ Voxel Manager   │  │ Interaction Templates                 │ │
+│  │ 5 layers (M2)   │  ├───────────────────────────────────────┤ │
+│  │ Water System    │  │ Actor Effects Architecture (M3 Phase1)│ │
+│  │ Dynamic levels  │  │ EffectBus + Interaction Actors        │ │
+│  ├─────────────────┤  │ Dual-path: trait-based / legacy       │ │
+│  │ Two-Pool Soil   │  ├───────────────────────────────────────┤ │
+│  │ Fast/Slow (M2)  │  │ BYOM Adapters                         │ │
+│  └─────────────────┘  │ mlp/static/random                     │ │
+│                        ├──────────────────────────────────────┤ │
+│                        │ World Randomizer                     │ │
+│                        │ D4 transforms                        │ │
+│                        └──────────────────────────────────────┘ │
+└─────────────────────────────────────────────────────────────────┘
            │
 ┌──────────▼────────────────────────────────────────────┐
 │    search/ (Shipped — Track A, rate-tuning search)    │
@@ -83,7 +86,7 @@ lila/
 │   ├── uv.lock                     # deterministic dependency lockfile
 │   ├── ecosim/                     # core simulation library
 │   │   ├── __init__.py
-│   │   ├── engine.py               # hybrid automaton (EcosystemEngine)
+│   │   ├── engine.py               # hybrid automaton (dual-path: trait + legacy)
 │   │   ├── entities.py             # entity schemas, init_entity()
 │   │   ├── biome.py                # biome presets → BiomeConfig
 │   │   ├── voxel_manager.py        # sparse 3D grid, delta tracking
@@ -92,6 +95,10 @@ lila/
 │   │   ├── traits.py               # [M2] TraitVector, allometric derivations
 │   │   ├── interactions.py         # [M2] InteractionTemplate grammar
 │   │   ├── trait_compiler.py       # [M2] TraitCompiler: traits → engine params
+│   │   ├── effects.py              # [M3] Effect dataclasses + EffectBus
+│   │   ├── actors/                 # [M3] Actor system
+│   │   │   ├── __init__.py        # InteractionContext, InteractionActor base
+│   │   │   └── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
 │   │   └── adapters/
 │   │       ├── __init__.py         # create_adapter() factory
 │   │       ├── mlp.py              # reference MLP (~500 params, pure Python)
@@ -102,10 +109,9 @@ lila/
 │   │   └── temperate_meadow_8sp.json # [M3] 8-species trait-based world
 │   ├── tests/
 │   │   ├── smoke_test.py           # 50-tick integration test
+│   │   ├── test_actors.py          # [M3] EffectBus + effect priority tests (18)
 │   │   ├── test_ecosim.py          # unit tests (12 tests)
-│   │   ├── test_traits.py          # [M2] allometric derivation tests
-│   │   ├── test_nutrients.py       # [M2] two-pool nutrient flow tests
-│   │   └── test_regression.py      # [M2] 2000-tick baseline comparison
+│   │   └── test_traits.py          # [M2] allometric derivation tests (54)
 │   └── weights/
 │       └── (motion_v0.json)        # placeholder for trained weights
 │
@@ -271,7 +277,7 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 - **Docker Compose** — single command: `docker compose up --build`
 - **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
-- **GitHub CI** — pytest (12 tests) + ruff lint, Python 3.11/3.12
+- **GitHub CI** — pytest (84 tests) + ruff lint, Python 3.11/3.12
 - **uv workflow** — `uv sync` for local dev, deterministic lockfile
 - **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
 
@@ -289,13 +295,13 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 Five species, two skeletons, five interaction chains:
 
-| Species      | Type   | Skeleton         | Role                                  |
-|--------------|--------|------------------|---------------------------------------|
+| Species      | Type   | Skeleton         | Role                                          |
+|--------------|--------|------------------|-----------------------------------------------|
 | Deer         | ANIMAL | quadruped_medium | Grazer, seeks grass → flowers → water → mates |
-| Butterfly    | INSECT | insect_wing      | Pollinator, seeks flowers → water fallback |
-| Oak          | TREE   | none             | Structure, shade, collapse indicator  |
-| Meadow Grass | PLANT  | none             | Ground cover, spreads via runners     |
-| Wildflower   | PLANT  | none             | Bloom cycle, pollination target       |
+| Butterfly    | INSECT | insect_wing      | Pollinator, seeks flowers → water fallback    |
+| Oak          | TREE   | none             | Structure, shade, collapse indicator          |
+| Meadow Grass | PLANT  | none             | Ground cover, spreads via runners             |
+| Wildflower   | PLANT  | none             | Bloom cycle, pollination target               |
 
 **Interaction chains:**
 1. **Grazing** — deer hunger → forages nearest grass → consumption → grass spreads if soil is moist
@@ -448,7 +454,7 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Deliverable:** `examples/species_definitions.json` — 8 species trait vectors. `demo_world.json` updated with `species_definitions` key.
 
 ### Test Suite ✅
-- **66 tests passing** across `test_ecosim.py` (12) + `test_traits.py` (54)
+- **84 tests passing** across `test_actors.py` (18) + `test_ecosim.py` (12) + `test_traits.py` (54)
 - Trait derivation tests: metabolic rate, speed, sensory range, flow rates, guard thresholds
 - Interaction template tests: herbivory matching/preference, predation with mass ratios, pollination with linger/cooldown, decomposition mineralization boost
 - Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
@@ -466,11 +472,11 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 - `ecosim/traits.py` — TraitVector, DerivedParams, allometric derivation functions (417 lines)
 - `ecosim/interactions.py` — InteractionTemplate base + 4 concrete templates (343 lines)
 - `ecosim/trait_compiler.py` — TraitCompiler class (285 lines)
-- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (1772 lines)
+- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (now ~2350 lines with actor integration + legacy fallback)
 - `examples/species_definitions.json` — 8 species trait vectors
 - Updated `examples/demo_world.json` — includes `species_definitions` key
+- `tests/test_actors.py` — 18 tests for EffectBus, effect priority, conflict resolution
 - `tests/test_traits.py` — 54 tests for derivations, templates, compiler, backward compat
-- `ecosim/engine_audit.py` — hard-coded parameter audit reference
 
 **Pending (blocked on Step 2.6):**
 - Refactored `voxel_manager.py` — 5 layers, inter-pool fluxes, death deposits
@@ -483,6 +489,98 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 
 ---
 
+## Milestone 3: Actor Effects Architecture ✅ (Phase 1 Complete)
+
+**Goal:** Extract entity↔entity interactions from the monolithic engine into an actor-based system with immutable effects, enabling parallel execution, deterministic replay, and network transport.
+
+### Completed Steps ✅
+
+#### Step 3.1 — Effect Dataclasses + EffectBus ✅
+All simulation effects defined as frozen dataclasses in `ecosim/effects.py` (339 lines):
+- **StateVarDelta** — increment/decrement a state variable
+- **SetStateVar** — set to absolute value
+- **StateTransition** — change discrete state (FORAGING, FLEEING, DYING...)
+- **VoxelDelta / VoxelBatchDelta** — environmental changes
+- **SpawnEntity / RemoveEntity** — entity lifecycle
+- **LingerEffect / ClearTarget / SetTarget** — behavior modifiers
+- **EventRecord** — simulation events for client broadcast
+
+**EffectBus** (`apply_batch()`) collects all effects from all actors, sorts by priority (terminal operations first), resolves conflicts (removed entities skip remaining effects), and applies atomically in a single pass.
+
+Priority order: REMOVE_ENTITY → STATE_TRANSITION → SET_STATE_VAR → LINGER/CLEAR_TARGET/SET_TARGET → STATE_VAR_DELTA → VOXEL → SPAWN_ENTITY → EVENT_RECORD.
+
+**Deliverable:** `ecosim/effects.py` (339 lines)
+
+#### Step 3.2 — Actor Protocol + Context ✅
+Base classes in `ecosim/actors/__init__.py` (229 lines):
+- **InteractionContext** — frozen dataclass with read-only snapshot: tick, entity, voxel_grid, biome, compiled ecology, params, nearby_entities, water_sources, climate, rate_multipliers
+- **InteractionActor** — abstract base class with `resolve(ctx) → list[Effect]` protocol
+- **FlowActor / GuardActor** — subtypes for Phase 2 (not yet implemented)
+- **build_interaction_registry(compiled)** — maps species names to actor instances from the compiled ecology
+
+**Deliverable:** `ecosim/actors/__init__.py` (229 lines)
+
+#### Step 3.3 — Interaction Actors ✅
+Four interaction actors in `ecosim/actors/interaction_actors.py` (481 lines):
+- **FleeActor** — detects predators via flee_targets from interaction matrix, emits StateTransition(FLEEING) + SetTarget(escape_pos)
+- **PredationActor** — detects prey proximity within PREDATION_CATCH_DISTANCE, emits StateVarDelta(hunger/energy for predator), SetStateVar(health=0.0) + RemoveEntity(prey), VoxelDelta(organic_matter deposit), EventRecord(PREDATION)
+- **HerbivoryActor** — detects plants in FORAGING range with hunger > threshold, emits StateVarDelta(hunger relief for herbivore), SetStateVar(growth/health reduction for plant), EventRecord(CONSUMPTION)
+- **PollinationActor** — detects FRUITING flowers within pollinator range, emits SetStateVar(health boost for flower), StateVarDelta(hunger/hydration relief for pollinator), LingerEffect + ClearTarget(pollinator), SetStateVar(_pollination_cooldown for flower), EventRecord(POLLINATION)
+
+All actors are pure functions: read-only context → list of effects. No side effects during actor execution.
+
+**Deliverable:** `ecosim/actors/interaction_actors.py` (481 lines)
+
+#### Step 3.4 — Engine Integration + Dual-Path Architecture ✅
+The engine's step() method now uses a **dual-path architecture**:
+
+**Trait path** (worlds with `species_definitions`):
+- Phase 2 interactions: actor_registry[species].resolve(ctx) → EffectBus.apply_batch()
+- Flow and guards route by diet_type (consumer/producer/decomposer)
+
+**Legacy path** (worlds without `species_definitions`):
+- All phases use inline entity-type-based logic
+- `_apply_flow()` routes by entity type: _flow_animal/plant/insect/microorganism
+- `_resolve_interactions()` uses inline flee/predation/herbivory/pollination
+- `_evaluate_guards()` routes by entity type: _guards_animal/plant/insect/microorganism
+
+The `_is_legacy` flag determines which path is taken at each phase boundary. This ensures backward compatibility with all existing world files.
+
+**Deliverable:** Refactored `ecosim/engine.py` (2353 lines)
+
+#### Step 3.5 — Legacy Guard/Flow Restoration ✅
+The trait-based refactoring in commit 1c04646 removed entity-type-based routing from `_apply_flow()` and `_evaluate_guards()`, causing legacy worlds to silently skip all flow and guard processing (frozen simulation). Fixed by adding full legacy fallback paths:
+
+- **Legacy flow functions**: _flow_animal, _flow_plant, _flow_insect, _flow_microorganism — entity-type-based continuous state evolution using metadata directly
+- **Legacy guard functions**: _guards_animal, _guards_plant, _guards_insect, _guards_microorganism — entity-type-based discrete state transitions with hysteresis bands
+- **Legacy helpers**: _find_mate_legacy, _reproduction_event_legacy, _deposit_organic_matter_legacy, _move_toward_target_legacy, _try_plant_spread_legacy
+
+All legacy functions use metadata (body_mass, lifespan, diet) instead of DerivedParams.
+
+**Deliverable:** `ecosim/engine.py` — 514 lines added in commit ec021eb
+
+### Test Suite ✅
+- **84 tests passing** across `test_ecosim.py` (12) + `test_traits.py` (54) + new actor/effect tests
+- Smoke test shows state variables evolving correctly for both trait and legacy worlds
+- Bee colony transitions to FORAGING, events fire, entities move toward targets
+
+### Milestone 3 Phase 1 Deliverables
+**Shipped:**
+- `ecosim/effects.py` — Effect dataclasses + EffectBus (339 lines)
+- `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, build_interaction_registry() (229 lines)
+- `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (481 lines)
+- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (2353 lines)
+
+**Pending (Phase 2):**
+- Flow actors: ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+- Guard actors: ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
+- Engine step() refactored to use flow/guard actors for trait worlds
+- Legacy flow/guard functions kept as fallback (already done)
+
+**New files: 3. Modified files: 1. No new external dependencies.**
+
+---
+
 ## Pending — Milestone 3: Emergent Dynamics Validation + Trait-Based Search
 
 **Goal:** Validate the trait architecture with long-running simulations of all 8 species. Expand the ASAL search pipeline from rate-tuning (Track A, shipped) to trait-based search (Track B).
@@ -490,6 +588,12 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Dependencies:** Milestone 2 must complete (two-pool nutrients). Track A search infrastructure is complete and stable.
 
 **Reference documents:** `TRAIT_TRANSITION_PLAN.md` (Phases 2–3)
+
+### Actor Effects Architecture — Phase 2 Pending ⏳
+The actor system for interactions (Phase 1) is complete. Flow and guard actors remain inline in engine.py:
+- [ ] ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor — continuous state evolution as effect-emitting actors
+- [ ] ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor — discrete state transitions as effect-emitting actors
+- [ ] Engine step() refactored to use flow/guard actors for trait worlds (legacy fallback already in place)
 
 ### New Species — Trait Vectors Defined ✅, Validation Pending ❌
 
