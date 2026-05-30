@@ -65,7 +65,7 @@ from typing import Any
 from .actors import ActorRegistry, InteractionContext, build_interaction_registry
 from .biome import BiomeConfig, get_biome_config
 from .effects import EffectBus
-from .entities import init_entity, is_alive
+from .entities import init_entity, is_alive, is_mobile
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import LegacyParams, compile_world
 from .traits import DerivedParams
@@ -482,17 +482,273 @@ class EcosystemEngine:
     # functions based on the entity's functional role.
 
     def _apply_flow(self, e: dict[str, Any], dt: float) -> None:
-        """Route entity to the appropriate flow function by functional role."""
-        params = self._get_params(e)
-        if params is None:
+        """Route entity to the appropriate flow function by functional role.
+
+        In legacy mode (no species_definitions), routes by entity type using
+        hardcoded metadata-based flow functions. In trait mode, routes by
+        diet_type using DerivedParams-based flow functions.
+        """
+        if self._is_legacy:
+            sv = e["state_vars"]
+            meta = e.get("metadata", {})
+            etype = e.get("type", "")
+
+            if etype in ("ANIMAL", "BIRD"):
+                self._flow_animal(e, sv, meta, dt)
+            elif etype in ("PLANT", "TREE"):
+                self._flow_plant(e, sv, meta, dt)
+            elif etype == "INSECT":
+                self._flow_insect(e, sv, meta, dt)
+            elif etype == "MICROORGANISM":
+                self._flow_microorganism(e, sv, meta, dt)
+        else:
+            params = self._get_params(e)
+            if params is None:
+                return
+
+            if params.diet_type == "autotroph":
+                self._flow_producer(e, params, dt)
+            elif params.diet_type == "decomposer":
+                self._flow_decomposer(e, params, dt)
+            else:
+                self._flow_consumer(e, params, dt)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Legacy Flow Functions — Entity-Type-Based (no traits required)
+    # Used when world has no species_definitions.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _flow_animal(
+        self,
+        e: dict[str, Any],
+        sv: dict[str, float],
+        meta: dict[str, Any],
+        dt: float,
+    ) -> None:
+        """Continuous flow for animals (legacy path)."""
+        base_metabolism = meta.get("metabolism_rate", 1.0)
+        biome_mod = self.biome.hunger_rate_modifier * self.biome.metabolic_scaling
+
+        sv["hunger"] = min(1.0, sv["hunger"] + 0.015 * base_metabolism * biome_mod * self.rate_hunger * dt)
+
+        if e["state"] in ("FORAGING", "HUNTING", "FLEEING"):
+            drain = 0.02 * self.biome.energy_drain_modifier * dt
+            sv["energy"] = max(0.0, sv["energy"] - drain)
+        elif e["state"] in ("RESTING", "IDLE"):
+            sv["energy"] = min(1.0, sv["energy"] + 0.03 * dt)
+
+        temp = self.climate.get("temperature", 20.0)
+        evap = self.biome.evaporation_rate * (temp / 30.0) * self.rate_thirst
+
+        if e["state"] == "DRINKING":
+            gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+            soil_moisture = self.voxels.get("moisture", gx, gy, gz)
+            recovery = 0.15 * soil_moisture * dt
+            sv["hydration"] = min(1.0, sv["hydration"] + recovery)
+            self.voxels.add("moisture", gx, gy, gz, -0.01 * self.rate_thirst * dt)
+            self._drain_nearest_water(e["position"], 0.003 * dt)
+        else:
+            sv["hydration"] = max(0.0, sv["hydration"] - evap * dt)
+
+        sv["age"] += dt
+
+        if sv["energy"] > 0.5 and sv["hunger"] < 0.5 and sv.get("health", 1.0) > 0.5:
+            sv["reproductive_drive"] = min(1.0, sv["reproductive_drive"] + 0.005 * self.rate_reproduction * dt)
+        elif sv["hunger"] > 0.7 or sv["energy"] < 0.2:
+            sv["reproductive_drive"] = max(0.0, sv["reproductive_drive"] - 0.002 * dt)
+
+        if sv["hunger"] > 0.8:
+            sv["health"] = max(0.0, sv["health"] - 0.01 * dt)
+        if sv.get("hydration", 1.0) < 0.15:
+            sv["health"] = max(0.0, sv["health"] - 0.015 * dt)
+
+        if is_mobile(e) and e["state"] in ("FORAGING", "HUNTING", "FLEEING", "DRINKING"):
+            self._move_toward_target_legacy(e, meta, dt)
+
+    def _flow_plant(
+        self,
+        e: dict[str, Any],
+        sv: dict[str, float],
+        meta: dict[str, Any],
+        dt: float,
+    ) -> None:
+        """Continuous flow for plants and trees (legacy path)."""
+        if e["state"] == "DORMANT":
+            sv["age"] += dt
             return
 
-        if params.diet_type == "autotroph":
-            self._flow_producer(e, params, dt)
-        elif params.diet_type == "decomposer":
-            self._flow_decomposer(e, params, dt)
+        if e.get("_pollination_cooldown", 0) > 0:
+            e["_pollination_cooldown"] -= 1
+
+        temp = self.climate.get("temperature", 20.0)
+        humidity = self.climate.get("humidity", 0.5)
+
+        if self._rain_ticks_remaining <= 0:
+            evap = self.biome.evaporation_rate * (temp / 30.0) * (1.0 - humidity * 0.5) * self.rate_thirst
+            sv["hydration"] = max(0.0, sv["hydration"] - evap * dt)
+
+        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+        soil_moisture = self.voxels.get("moisture", gx, gy, gz)
+        water_demand = meta.get("water_demand", 0.03)
+        uptake = min(water_demand * dt, soil_moisture * 0.1 * dt)
+        sv["hydration"] = min(1.0, sv["hydration"] + uptake)
+
+        light = self.biome.light_availability
+        soil_nutrients = self.voxels.get("nutrients", gx, gy, gz)
+        growth_potential = min(sv["hydration"], soil_nutrients, light)
+        base_growth = meta.get("growth_rate", 0.02)
+        growth_inc = base_growth * growth_potential * self.biome.growth_rate_modifier * self.rate_growth * dt
+        sv["growth"] = min(1.0, sv["growth"] + growth_inc)
+
+        n_demand = meta.get("nutrient_demand", {})
+        total_demand = sum(n_demand.values()) if isinstance(n_demand, dict) else 0.01
+        sv["nutrient_store"] = min(1.0, sv["nutrient_store"] + total_demand * soil_nutrients * dt)
+
+        if sv.get("hydration", 1.0) < 0.15:
+            sv["health"] = max(0.0, sv["health"] - 0.008 * dt)
+        if sv.get("nutrient_store", 0.5) < 0.1:
+            sv["health"] = max(0.0, sv["health"] - 0.005 * dt)
+
+        if e["type"] == "TREE":
+            support_count = sum(
+                1 for ent in self.entities.values()
+                if is_alive(ent)
+                and ent.get("state") != "DORMANT"
+                and ent.get("type") not in ("TREE", "INSECT")
+            )
+            if support_count <= 2:
+                sv["health"] = max(0.0, sv["health"] - 0.03 * dt)
+                sv["hydration"] = max(0.0, sv["hydration"] - 0.01 * dt)
+
+        sv["age"] += dt
+
+        if e["type"] == "PLANT":
+            self._try_plant_spread_legacy(e, sv, meta, dt)
+
+    def _flow_insect(
+        self,
+        e: dict[str, Any],
+        sv: dict[str, float],
+        meta: dict[str, Any],
+        dt: float,
+    ) -> None:
+        """Continuous flow for insects (legacy path)."""
+        base_metabolism = meta.get("metabolism_rate", 0.8)
+        biome_mod = self.biome.metabolic_scaling
+
+        sv["hunger"] = min(1.0, sv["hunger"] + 0.01 * base_metabolism * biome_mod * self.rate_hunger * dt)
+
+        if self._is_near_water(e["position"]):
+            sv["hunger"] = max(0.0, sv["hunger"] - 0.005 * dt)
+            sv["colony_health"] = min(1.0, sv["colony_health"] + 0.002 * dt)
+
+        if e["state"] == "RESTING" or e.get("_linger", 0) > 0:
+            sv["energy"] = min(1.0, sv["energy"] + 0.02 * dt)
         else:
-            self._flow_consumer(e, params, dt)
+            sv["energy"] = max(0.0, sv["energy"] - 0.005 * biome_mod * dt)
+
+        if sv.get("hunger", 0) > 0.7 or sv.get("energy", 1.0) < 0.2:
+            drain = 0.008 + sv.get("hunger", 0) * 0.02
+            sv["colony_health"] = max(0.0, sv["colony_health"] - drain * dt)
+
+        sv["age"] += dt
+
+        if sv.get("energy", 1.0) > 0.4 and sv.get("hunger", 0) < 0.5 and sv.get("colony_health", 1.0) > 0.4:
+            sv["reproductive_drive"] = min(1.0, sv["reproductive_drive"] + 0.012 * self.rate_reproduction * dt)
+        elif sv.get("hunger", 0) > 0.7 or sv.get("colony_health", 1.0) < 0.2:
+            sv["reproductive_drive"] = max(0.0, sv["reproductive_drive"] - 0.003 * dt)
+
+        if is_mobile(e) and e["state"] == "FORAGING":
+            linger = e.get("_linger", 0)
+            if linger > 0:
+                e["_linger"] = linger - 1
+                e["velocity"] = [0.0, 0.0, 0.0]
+            else:
+                self._move_toward_target_legacy(e, meta, dt)
+
+    def _flow_microorganism(
+        self,
+        e: dict[str, Any],
+        sv: dict[str, float],
+        meta: dict[str, Any],
+        dt: float,
+    ) -> None:
+        """Continuous flow for microorganisms/decomposers (legacy path)."""
+        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+        organic = self.voxels.get("organic_matter", gx, gy, gz)
+        moisture = self.voxels.get("moisture", gx, gy, gz)
+
+        optimal_activity = min(organic, moisture) * self.biome.microbial_activity_modifier
+        sv["activity"] += (optimal_activity - sv["activity"]) * 0.1 * dt
+        sv["activity"] = max(0.0, min(1.0, sv["activity"]))
+
+        if sv.get("activity", 0) > 0.3:
+            sv["population"] = min(1.0, sv["population"] + 0.005 * sv["activity"] * dt)
+        else:
+            sv["population"] = max(0.0, sv["population"] - 0.003 * dt)
+
+    def _move_toward_target_legacy(self, e: dict[str, Any], meta: dict[str, Any], dt: float) -> None:
+        """Legacy movement — uses metadata speed instead of DerivedParams."""
+        speed = meta.get("movement_speed", 1.0)
+        if speed <= 0 or not e.get("_target"):
+            return
+
+        target = e["_target"]
+        pos = e["position"]
+        dx, dz = target[0] - pos[0], target[2] - pos[2]
+        dist = (dx**2 + dz**2) ** 0.5
+        if dist < 0.1:
+            del e["_target"]
+            return
+
+        move_amount = min(speed * dt, dist)
+        e["position"][0] += dx / dist * move_amount
+        e["position"][2] += dz / dist * move_amount
+        e["velocity"] = [dx / dist * speed, 0.0, dz / dist * speed]
+
+    def _try_plant_spread_legacy(self, e: dict, sv: dict, meta: dict, dt: float) -> None:
+        """Legacy plant spreading — no traits required."""
+        if (sv.get("health", 1.0) < SPREAD_MIN_HEALTH
+                or sv.get("hydration", 1.0) < SPREAD_MIN_HYDRATION
+                or sv.get("growth", 0.1) < SPREAD_MIN_GROWTH):
+            return
+
+        cooldown = e.get("_spread_cooldown", 0)
+        if cooldown > 0:
+            e["_spread_cooldown"] = cooldown - 1
+            return
+
+        if random.random() > 0.3 * self.rate_reproduction:
+            return
+
+        spread_range = meta.get("canopy_radius", 2.0) or 2.0
+        spread_pos = self._clamp_to_grid([
+            e["position"][0] + random.uniform(-spread_range, spread_range), 0.0,
+            e["position"][2] + random.uniform(-spread_range, spread_range),
+        ])
+
+        for other in self._entities_in_range(spread_pos, SPREAD_DENSITY_RADIUS):
+            if (other.get("type") in ("PLANT", "TREE") and other["id"] != e["id"]):
+                e["_spread_cooldown"] = 10 // 2
+                return
+
+        gx, gy, gz = self.voxels.world_to_grid(spread_pos)
+        if (self.voxels.get("moisture", gx, gy, gz) < SPREAD_SOIL_MIN_MOISTURE
+                or self.voxels.get("nutrients", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
+            return
+
+        child = init_entity({
+            "id": f"{e['id']}_s{self.tick}",
+            "type": e["type"],
+            "species": e.get("species"),
+            "position": spread_pos,
+            "metadata": dict(e["metadata"]),
+        })
+        self._spawns.append(child)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Trait-Based Flow Functions — require DerivedParams
+    # ═══════════════════════════════════════════════════════════════════════
 
     def _flow_consumer(self, e: dict, p: DerivedParams, dt: float) -> None:
         """Continuous flow for all mobile consumers.
@@ -818,16 +1074,195 @@ class EcosystemEngine:
     # thresholds are crossed. Hysteresis bands prevent oscillation.
 
     def _evaluate_guards(self, e: dict[str, Any]) -> None:
-        """Route entity to the appropriate guard evaluator."""
-        params = self._get_params(e)
-        if params is None:
-            return
-        if params.diet_type == "autotroph":
-            self._guards_producer(e, params)
-        elif params.diet_type == "decomposer":
-            self._guards_decomposer(e, params)
+        """Evaluate discrete state transition guards for an entity.
+
+        In legacy mode (no species_definitions), routes by entity type using
+        hardcoded metadata-based guard functions. In trait mode, routes by
+        diet_type using DerivedParams-based guard functions.
+        """
+        if self._is_legacy:
+            etype = e.get("type", "")
+            if etype in ("ANIMAL", "BIRD"):
+                self._guards_animal(e)
+            elif etype in ("PLANT", "TREE"):
+                self._guards_plant(e)
+            elif etype == "INSECT":
+                self._guards_insect(e)
+            elif etype == "MICROORGANISM":
+                self._guards_microorganism(e)
         else:
-            self._guards_consumer(e, params)
+            params = self._get_params(e)
+            if params is None:
+                return
+            if params.diet_type == "autotroph":
+                self._guards_producer(e, params)
+            elif params.diet_type == "decomposer":
+                self._guards_decomposer(e, params)
+            else:
+                self._guards_consumer(e, params)
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Legacy Guard Functions — Entity-Type-Based (no traits required)
+    # Used when world has no species_definitions.
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _guards_animal(self, e: dict[str, Any]) -> None:
+        """Guard evaluation for animals (legacy path)."""
+        sv = e["state_vars"]
+        meta = e.get("metadata", {})
+        old_state = e["state"]
+
+        lifespan = meta.get("lifespan", 1000.0)
+        if sv.get("health", 1.0) <= 0.0:
+            e["state"] = "DYING"
+            self._emit_event("DEATH_STARVE", e)
+            self._schedule_removal(e)
+        elif sv.get("age", 0) >= lifespan:
+            e["state"] = "DYING"
+            self._emit_event("DEATH_NATURAL", e)
+            self._schedule_removal(e)
+
+        elif e["state"] == "FLEEING":
+            if e.get("_target") is None:
+                e["state"] = "IDLE"
+
+        elif sv.get("reproductive_drive", 0) > 0.8 and self._find_mate_legacy(e):
+            e["state"] = "REPRODUCING"
+            self._reproduction_event_legacy(e, meta)
+
+        elif e["state"] == "DRINKING":
+            if sv.get("hydration", 1.0) >= 0.6:
+                e["state"] = "IDLE"
+                e["_target"] = None
+        elif sv.get("hydration", 1.0) < 0.2:
+            e["state"] = "DRINKING"
+            water_pos = self._find_nearest_water(e["position"])
+            if water_pos:
+                e["_target"] = water_pos
+
+        elif e["state"] == "RESTING":
+            if sv.get("energy", 1.0) >= 0.5:
+                e["state"] = "IDLE"
+        elif sv.get("energy", 1.0) < 0.2:
+            e["state"] = "RESTING"
+
+        elif e["state"] in ("FORAGING", "HUNTING"):
+            if sv.get("hunger", 0) < 0.15:
+                e["state"] = "IDLE"
+            elif meta.get("diet") == "carnivore" and sv.get("hunger", 0) > 0.5:
+                e["state"] = "HUNTING"
+        elif sv.get("hunger", 0) >= 0.3:
+            diet = meta.get("diet", "herbivore")
+            if diet == "carnivore" and sv.get("hunger", 0) > 0.5:
+                e["state"] = "HUNTING"
+            else:
+                e["state"] = "FORAGING"
+
+        else:
+            e["state"] = "IDLE"
+
+        if e["state"] != old_state:
+            self._emit_state_change(e, old_state, e["state"])
+
+    def _guards_plant(self, e: dict[str, Any]) -> None:
+        """Guard evaluation for plants and trees (legacy path)."""
+        sv = e["state_vars"]
+        old_state = e["state"]
+
+        if sv.get("health", 1.0) <= 0.0:
+            if e["type"] == "TREE":
+                e["state"] = "DEAD"
+                self._emit_event("DEATH_NATURAL", e)
+                self._schedule_removal(e)
+                self._deposit_organic_matter_legacy(e)
+            elif e["state"] != "DORMANT":
+                e["state"] = "DORMANT"
+                sv["growth"] = 0.0
+                e["_dormant_ticks"] = 0
+
+        elif e["state"] == "DORMANT":
+            gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+            soil_moisture = self.voxels.get("moisture", gx, gy, gz)
+            soil_nutrients = self.voxels.get("nutrients", gx, gy, gz)
+
+            e["_dormant_ticks"] = e.get("_dormant_ticks", 0) + 1
+
+            if soil_moisture > 0.25 and soil_nutrients > 0.15:
+                sv["health"] = min(1.0, sv["health"] + 0.015)
+                sv["hydration"] = min(1.0, sv["hydration"] + 0.02)
+                if sv["health"] > 0.2:
+                    e["state"] = "GROWING"
+                    sv["growth"] = 0.05
+                    sv["nutrient_store"] = max(sv.get("nutrient_store", 0.5), 0.2)
+                    e["_dormant_ticks"] = 0
+
+            elif e.get("_dormant_ticks", 0) > 2000:
+                e["state"] = "DEAD"
+                self._emit_event("DEATH_NATURAL", e)
+                self._schedule_removal(e)
+                self._deposit_organic_matter_legacy(e)
+
+        elif sv.get("hydration", 1.0) <= 0.3 or sv.get("nutrient_store", 0.5) <= 0.2:
+            e["state"] = "WILTING"
+        elif sv.get("growth", 0) >= 0.5 and sv.get("health", 1.0) > 0.4:
+            e["state"] = "FRUITING"
+        else:
+            e["state"] = "GROWING"
+
+        if e["state"] != old_state:
+            self._emit_state_change(e, old_state, e["state"])
+
+    def _guards_insect(self, e: dict[str, Any]) -> None:
+        """Guard evaluation for insects (legacy path)."""
+        sv = e["state_vars"]
+        old_state = e["state"]
+
+        if sv.get("colony_health", 1.0) <= 0.0:
+            e["state"] = "DEAD"
+            self._emit_event("DEATH_NATURAL", e)
+            self._schedule_removal(e)
+        elif sv.get("colony_health", 1.0) < 0.3:
+            e["state"] = "SWARMING"
+
+        elif e["state"] == "RESTING":
+            if sv.get("energy", 1.0) >= 0.4:
+                e["state"] = "FORAGING"
+        elif sv.get("energy", 1.0) < 0.15:
+            e["state"] = "RESTING"
+            e["velocity"] = [0.0, 0.0, 0.0]
+            e["_target"] = None
+
+        elif sv.get("reproductive_drive", 0) > 0.7 and self._find_mate_legacy(e):
+            e["state"] = "REPRODUCING"
+            self._reproduction_event_legacy(e, {})
+
+        else:
+            e["state"] = "FORAGING"
+
+        if e["state"] != old_state:
+            self._emit_state_change(e, old_state, e["state"])
+
+    def _guards_microorganism(self, e: dict[str, Any]) -> None:
+        """Guard evaluation for microorganisms (legacy path)."""
+        sv = e["state_vars"]
+        old_state = e["state"]
+
+        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+        organic = self.voxels.get("organic_matter", gx, gy, gz)
+
+        if organic > 0.8 and sv.get("population", 0) > 0.7:
+            e["state"] = "BLOOMING"
+        elif sv.get("activity", 0.5) < 0.2:
+            e["state"] = "DORMANT"
+        else:
+            e["state"] = "ACTIVE"
+
+        if e["state"] != old_state:
+            self._emit_state_change(e, old_state, e["state"])
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Trait-Based Guard Functions — require DerivedParams
+    # ═══════════════════════════════════════════════════════════════════════
 
     def _guards_consumer(self, e: dict, p: DerivedParams) -> None:
         """Guard evaluation for consumers.
@@ -1626,6 +2061,67 @@ class EcosystemEngine:
             if self._distance(pos, source["position"]) <= source["radius"] + 1.0:
                 return True
         return False
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Legacy Helper Functions — no traits required
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _find_mate_legacy(self, e: dict[str, Any]) -> bool:
+        """Legacy mate finding — uses metadata sensory_range or default 8.0."""
+        meta = e.get("metadata", {})
+        sensory = meta.get("sensory_range", 8.0)
+        for other in self._entities_in_range(e["position"], sensory, e["id"]):
+            if (other.get("species") == e.get("species")
+                    and other["state_vars"].get("reproductive_drive", 0) > 0.3):
+                return True
+        return False
+
+    def _reproduction_event_legacy(self, parent: dict, meta: dict) -> None:
+        """Legacy reproduction — uses metadata for costs/sizes."""
+        parent["state_vars"]["reproductive_drive"] = 0.0
+        parent["state_vars"]["energy"] = max(
+            0.0, parent["state_vars"]["energy"] - 0.15)
+
+        if "colony_health" in parent["state_vars"]:
+            parent["state_vars"]["colony_health"] = max(
+                0.0, parent["state_vars"]["colony_health"] - 0.045)
+
+        clutch_size = meta.get("clutch_size", 2) if "clutch_size" in meta else (3 if parent["type"] == "INSECT" else 1)
+        for _ in range(clutch_size):
+            child = init_entity({
+                "id": f"{parent['id']}_child_{self.tick}_{random.randint(0, 999)}",
+                "type": parent["type"],
+                "species": parent.get("species", "unknown"),
+                "position": self._clamp_to_grid([
+                    parent["position"][0] + random.uniform(-1.0, 1.0), 0.0,
+                    parent["position"][2] + random.uniform(-1.0, 1.0),
+                ]),
+                "metadata": dict(parent.get("metadata", {})),
+                "skeleton_id": parent.get("skeleton_id"),
+            })
+            psv = parent["state_vars"]
+            csv = child["state_vars"]
+            csv["hunger"] = psv.get("hunger", 0) * 0.5
+            csv["energy"] = max(0.3, psv.get("energy", 1.0) * 0.7)
+            if "colony_health" in csv:
+                csv["colony_health"] = max(0.4, psv.get("colony_health", 1.0) * 0.7)
+            if "health" in csv:
+                csv["health"] = max(0.6, psv.get("health", 1.0) * 0.8)
+            self._spawns.append(child)
+            self._events.append({
+                "type": "REPRODUCTION", "tick": self.tick,
+                "source_id": parent["id"], "target_id": child["id"],
+                "position": list(child["position"]),
+            })
+
+    def _deposit_organic_matter_legacy(self, e: dict) -> None:
+        """Legacy organic matter deposit — uses metadata body_mass."""
+        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
+        mass = e.get("metadata", {}).get("body_mass", 10.0)
+        deposit = min(0.3, mass / 500.0)
+        self.voxels.add("organic_matter", gx, gy, gz, deposit)
+
+    # ═══════════════════════════════════════════════════════════════════════
 
     def _find_mate(self, e: dict[str, Any]) -> bool:
         """Check if a compatible mate is within sensory range."""
