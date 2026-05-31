@@ -1,6 +1,6 @@
 # Interaction Actor Model + Effects Architecture
 
-**Status:** Phase 1 Complete · Phase 2 (Flow/Guard Actors) Pending  
+**Status:** Phase 1 ✅ Complete · Phase 2 ✅ Complete · Phase 3 (Distributed Readiness) Pending  
 **Created:** 2026-05-30  
 **Last Updated:** 2026-05-30  
 **Owner:** līlā Ecosystem Engine Team  
@@ -15,7 +15,7 @@
 4. [Effects Model — Immutable Delta Descriptions](#effects-model--immutable-delta-descriptions)
 5. [Interaction Actor Protocol](#interaction-actor-protocol)
 6. [Phase 1: Effects Extraction + Interaction Actors ✅ COMPLETE](#phase-1-effects-extraction--interaction-actors-complete)
-7. [Phase 2: Flow + Guard Actors (Pending)](#phase-2-flow--guard-actors-pending)
+7. [Phase 2: Flow + Guard Actors ✅ Complete](#phase-2-flow--guard-actors-complete)
 8. [Phase 3: Distributed Readiness (Future)](#phase-3-distributed-readiness-future)
 9. [Serialization Layer — Pluggable Format Design](#serialization-layer--pluggable-format-design)
 10. [Effect Application Order & Conflict Resolution](#effect-application-order--conflict-resolution)
@@ -1002,21 +1002,21 @@ class EffectBus:
 
 ---
 
-## Phase 2: Flow + Guard Actors (Pending)
+## Phase 2: Flow + Guard Actors ✅ Complete
 
-**Status:** NOT YET IMPLEMENTED. Flow and guard logic remains inline in `engine.py` for both trait-based and legacy paths. The actor infrastructure is ready — only the flow/guard actor classes need to be written.
+**Status:** IMPLEMENTED. Flow and guard logic extracted into actor classes for trait-based worlds. Legacy inline functions retained in `engine.py` for backward compatibility (dual-path architecture).
 
-### File Structure (Target for Phase 2)
+### File Structure (Current)
 
 ```
 ecosim/
-├── engine.py              ← Refactored: ~300 lines (orchestrator only)
-├── effects.py             ← Unchanged from Phase 1 ✅
+├── engine.py              ← ~2465 lines (orchestrator + legacy inline fallbacks)
+├── effects.py             ← 521 lines — EffectBus with apply_flow_batch() + apply_effects_with_om_deposit()
 ├── actors/                ← Expanded directory
-│   ├── __init__.py        ← Actor registry, base classes ✅
+│   ├── __init__.py        ← 380 lines — FlowContext/GuardContext, registries, builders ✅
 │   ├── interaction_actors.py  ← FleeActor, PredationActor, HerbivoryActor, PollinationActor ✅
-│   ├── flow_actors.py     ← ⏳ PENDING: ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
-│   └── guard_actors.py    ← ⏳ PENDING: ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
+│   ├── flow_actors.py     ← 518 lines: ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor ✅
+│   └── guard_actors.py    ← 461 lines: ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor ✅
 ├── interactions.py        ← Unchanged
 ├── traits.py              ← Unchanged
 ├── trait_compiler.py      ← Unchanged
@@ -1025,114 +1025,39 @@ ecosim/
 └── biome.py               ← Unchanged
 ```
 
-### ConsumerFlowActor — Before vs After (Design)
+### ConsumerFlowActor — Implementation Summary
 
-**Before (in engine.py, ~120 lines of inline flow logic):**
+**Extracted from**: `engine._flow_consumer()` (~120 lines inline → 85 lines actor + constants)
 
-The current `_flow_consumer` handles: hunger buildup, energy drain/recovery, hydration loss, drinking recovery, near-water bonus, reproductive drive, health degradation under starvation/dehydration, colony health, and movement toward targets. All rate constants come from `DerivedParams`.
+**Handles**: hunger buildup, energy drain/recovery, hydration loss, drinking recovery, near-water bonus, reproductive drive, health degradation under starvation/dehydration, colony health. Movement toward targets handled by engine after effect application.
 
-**After (ConsumerFlowActor — design only):**
+**Key design decisions**:
+- `FlowContext` extends `InteractionContext` with `dt`, `rain_ticks_remaining`, and `_entities` (for tree collapse check)
+- All rate constants defined as module-level constants in `flow_actors.py` for easy tuning
+- Biome modifiers and world rate multipliers applied on top of trait-derived base rates
+- Lingering effects (e.g., pollination visits) handled via `LingerEffect` + energy recovery
 
-```python
-class ConsumerFlowActor(FlowActor):
-    """Continuous flow for all mobile consumers.
-    
-    Handles: hunger buildup, energy drain/recovery, hydration loss,
-    drinking recovery, near-water bonus, reproductive drive, health
-    degradation under starvation/dehydration, colony health.
-    
-    Movement is handled by a separate MovementActor (or inline in engine).
-    """
-    
-    def resolve(self, ctx: InteractionContext) -> list[Effect]:
-        if ctx.params is None:
-            return []
-        
-        p = ctx.params
-        sv = ctx.entity["state_vars"]
-        self._ensure_consumer_vars(sv)  # Ensure all keys exist
-        
-        effects: list[Effect] = []
-        biome_mod = ctx.biome.hunger_rate_modifier * ctx.biome.metabolic_scaling
-        temp = ctx.climate.get("temperature", 20.0)
-        
-        # ── Hunger — increases with metabolism ──
-        hunger_delta = p.hunger_rate * biome_mod * self._get_rate_multiplier("hunger")
-        effects.append(StateVarDelta(
-            entity_id=ctx.entity["id"], var_name="hunger",
-            delta=hunger_delta, tick=ctx.tick,
-        ))
-        
-        # ── Energy — drains during activity, recovers at rest ──
-        if ctx.entity["state"] in ACTIVE_ENERGY_DRAIN_STATES:
-            drain = p.energy_drain * ctx.biome.energy_drain_modifier
-            effects.append(StateVarDelta(
-                entity_id=ctx.entity["id"], var_name="energy",
-                delta=-drain, tick=ctx.tick,
-            ))
-        elif ctx.entity["state"] in ENERGY_RECOVERY_STATES:
-            effects.append(StateVarDelta(
-                entity_id=ctx.entity["id"], var_name="energy",
-                delta=p.energy_recovery, tick=ctx.tick,
-            ))
-        
-        # ... (hydration, near-water bonus, reproductive drive, health)
-        
-        return effects
-```
+### ConsumerGuardActor — Implementation Summary
 
-### Guard Actors — Before vs After (Design)
+**Extracted from**: `engine._guards_consumer()` (~80 lines inline → 70 lines actor)
 
-**Before**: `_guards_consumer`, `_guards_producer`, `_guards_decomposer` (~150 lines total) handle discrete state transitions with hysteresis.
+**State machine priority** (highest to lowest):
+1. Death (health ≤ 0 or age ≥ lifespan) → `RemoveEntity` + `EventRecord(DEATH_STARVE/NATURAL)` + `DepositOrganicMatter`
+2. Colony swarming (colony_health < 0.3) → `StateTransition(SWARMING)`
+3. Fleeing (set by interaction resolver, cleared when target reached) → `StateTransition(IDLE)`
+4. Reproduction (drive > threshold AND mate available) → `SpawnEntity` + `EventRecord(REPRODUCTION)`
+5. Drinking (hydration hysteresis: enter < p.hydration_enter, exit ≥ p.hydration_exit)
+6. Resting (energy hysteresis: enter < p.energy_enter, exit ≥ p.energy_exit)
+7. Foraging/Hunting (hunger hysteresis: enter ≥ p.hunger_enter, exit < p.hunger_exit)
+8. Idle (default)
 
-**After**: Each guard actor returns `StateTransition` effects and optionally `EventRecord` for state changes:
+**Key design decisions**:
+- `GuardContext` extends `InteractionContext` with `_entities` for mate search and support count
+- Death triggers `RemoveEntity` + `EventRecord` + `DepositOrganicMatter` (OM deposit handled by engine via callback)
+- Reproduction checks proximity to potential mates in full entity list (not just nearby_entities)
+- State transitions emit `StateTransition` effects; engine applies them and emits STATE_CHANGE events
 
-```python
-class ConsumerGuardActor(GuardActor):
-    """Guard evaluation for consumers.
-    
-    State machine priority (highest to lowest):
-    1. Death (health ≤ 0 or age ≥ lifespan)
-    2. Colony swarming (colony_health < 0.3)
-    3. Fleeing (set by interaction resolver, cleared when target reached)
-    4. Reproduction (drive > threshold AND mate available)
-    5. Drinking (hydration hysteresis: enter < 0.2, exit ≥ 0.6)
-    6. Resting (energy hysteresis: enter < 0.2, exit ≥ 0.5)
-    7. Foraging/Hunting (hunger hysteresis: enter ≥ 0.3, exit < 0.15)
-    8. Idle (default)
-    
-    Returns StateTransition effects for each state change detected.
-    """
-    
-    def resolve(self, ctx: InteractionContext) -> list[Effect]:
-        if ctx.params is None:
-            return []
-        
-        p = ctx.params
-        sv = ctx.entity["state_vars"]
-        old_state = ctx.entity["state"]
-        meta = ctx.entity["metadata"]
-        effects: list[Effect] = []
-        
-        # ── Death ──
-        if p.generation_time_ticks > 0:
-            lifespan = p.generation_time_ticks
-        else:
-            lifespan = meta.get("lifespan", 1000.0)
-        
-        health_key = "colony_health" if "colony_health" in sv else "health"
-        if sv.get(health_key, 1.0) <= 0.0:
-            effects.extend([
-                StateTransition(entity_id=ctx.entity["id"], new_state="DYING", tick=ctx.tick),
-                RemoveEntity(entity_id=ctx.entity["id"], tick=ctx.tick),
-                EventRecord(event_type="DEATH_STARVE", source_id=ctx.entity["id"],
-                           target_id=None, position=list(ctx.entity["position"]),
-                           tick=ctx.tick),
-            ])
-        # ... (rest of guard logic)
-        
-        return effects
-```
+
 
 ---
 

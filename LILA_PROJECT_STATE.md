@@ -515,10 +515,10 @@ Priority order: REMOVE_ENTITY → STATE_TRANSITION → SET_STATE_VAR → LINGER/
 Base classes in `ecosim/actors/__init__.py` (229 lines):
 - **InteractionContext** — frozen dataclass with read-only snapshot: tick, entity, voxel_grid, biome, compiled ecology, params, nearby_entities, water_sources, climate, rate_multipliers
 - **InteractionActor** — abstract base class with `resolve(ctx) → list[Effect]` protocol
-- **FlowActor / GuardActor** — subtypes for Phase 2 (not yet implemented)
+- **FlowActor / GuardActor** — subtypes for Phase 2 ✅ (implemented)
 - **build_interaction_registry(compiled)** — maps species names to actor instances from the compiled ecology
 
-**Deliverable:** `ecosim/actors/__init__.py` (229 lines)
+**Deliverable:** `ecosim/actors/__init__.py` (380 lines — Phase 1 + Phase 2: FlowContext/GuardContext, registries, builders)
 
 #### Step 3.3 — Interaction Actors ✅
 Four interaction actors in `ecosim/actors/interaction_actors.py` (481 lines):
@@ -564,20 +564,22 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 - Smoke test shows state variables evolving correctly for both trait and legacy worlds
 - Bee colony transitions to FORAGING, events fire, entities move toward targets
 
-### Milestone 3 Phase 1 Deliverables
+### Milestone 3 Phase 1 Deliverables ✅
 **Shipped:**
-- `ecosim/effects.py` — Effect dataclasses + EffectBus (339 lines)
-- `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, build_interaction_registry() (229 lines)
+- `ecosim/effects.py` — Effect dataclasses + EffectBus (521 lines after Phase 2 additions)
+- `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, FlowActor/GuardActor subtypes, registries, builders (380 lines)
 - `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (481 lines)
-- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (2353 lines)
+- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (2465 lines)
 
-**Pending (Phase 2):**
-- Flow actors: ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
-- Guard actors: ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
-- Engine step() refactored to use flow/guard actors for trait worlds
-- Legacy flow/guard functions kept as fallback (already done)
+### Milestone 3 Phase 2 Deliverables ✅
+**Shipped:**
+- `ecosim/actors/flow_actors.py` — ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor (518 lines)
+- `ecosim/actors/guard_actors.py` — ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor (461 lines)
+- New effect: `DepositOrganicMatter` — organic matter deposition on entity death
+- EffectBus additions: `apply_flow_batch()`, `apply_effects_with_om_deposit()`
+- Engine step(): flow/guard actors used for trait-based worlds; legacy inline functions retained as fallback
 
-**New files: 3. Modified files: 1. No new external dependencies.**
+**New files: 2. Modified files: 3. No new external dependencies.****
 
 ---
 
@@ -589,11 +591,11 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 
 **Reference documents:** `TRAIT_TRANSITION_PLAN.md` (Phases 2–3)
 
-### Actor Effects Architecture — Phase 2 Pending ⏳
-The actor system for interactions (Phase 1) is complete. Flow and guard actors remain inline in engine.py:
-- [ ] ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor — continuous state evolution as effect-emitting actors
-- [ ] ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor — discrete state transitions as effect-emitting actors
-- [ ] Engine step() refactored to use flow/guard actors for trait worlds (legacy fallback already in place)
+### Actor Effects Architecture — Phase 2 Complete ✅
+The actor system is complete across all three phases:
+- [x] ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor — continuous state evolution as effect-emitting actors
+- [x] ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor — discrete state transitions as effect-emitting actors
+- [x] Engine step() uses flow/guard actors for trait worlds (legacy fallback retained)
 
 ### New Species — Trait Vectors Defined ✅, Validation Pending ❌
 
