@@ -43,6 +43,7 @@ class EffectType(str, Enum):
     # Environmental changes
     VOXEL_DELTA = "voxel_delta"               # Change voxel layer value
     VOXEL_BATCH_DELTA = "voxel_batch_delta"   # Multiple voxel changes at once
+    DEPOSIT_OM = "deposit_organic_matter"     # Deposit OM on entity death
 
     # Entity behavior modifiers
     LINGER_EFFECT = "linger_effect"           # Stay at location for N ticks
@@ -67,6 +68,7 @@ EFFECT_PRIORITY: dict[EffectType, int] = {
     EffectType.STATE_VAR_DELTA: 6,
     EffectType.VOXEL_BATCH_DELTA: 7,
     EffectType.VOXEL_DELTA: 7,
+    EffectType.DEPOSIT_OM: 7,              # Same priority as voxel changes
     EffectType.SPAWN_ENTITY: 8,
     EffectType.EVENT_RECORD: 9,
 }
@@ -139,6 +141,26 @@ class RemoveEntity(Effect):
     """Request an entity be removed."""
     effect_type: EffectType = EffectType.REMOVE_ENTITY
     entity_id: str
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Organic Matter Deposit (on death)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True, kw_only=True)
+class DepositOrganicMatter(Effect):
+    """Deposit organic matter at entity's position on death.
+
+    Carries all data needed for deposit calculation — the engine
+    processes this during removal handling.
+    """
+    effect_type: EffectType = EffectType.DEPOSIT_OM
+    entity_id: str
+    type: str            # "ANIMAL", "PLANT", etc.
+    species: str | None
+    position: list[float]  # [x, y, z]
+    metadata: dict[str, Any]
+    params: dict[str, float] | None = None  # DerivedParams as dict (for OM calculation)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -337,3 +359,163 @@ class EffectBus:
     ) -> None:
         """Alias for ``apply_effects`` — same behavior."""
         self.apply_effects(effects, entities, voxels, spawns, removals, events)
+
+    def apply_flow_batch(
+        self,
+        effects: list[Effect],
+        entities: dict[str, dict],
+        voxels: Any,
+    ) -> None:
+        """Apply flow-only effects (state vars + voxel changes).
+
+        Flow actors only produce StateVarDelta, SetStateVar, and VoxelDelta.
+        No entity lifecycle changes — those are handled by guard actors.
+
+        Args:
+            effects: Flow effects from all flow actors this tick.
+            entities: Entity registry (mutated in place for state vars).
+            voxels: Voxel grid manager (mutated in place for voxel deltas).
+        """
+        # Sort by priority — SetStateVar before StateVarDelta
+        sorted_effects = sorted(
+            effects, key=lambda e: EFFECT_PRIORITY.get(e.effect_type, 9)
+        )
+
+        for effect in sorted_effects:
+            if isinstance(effect, SetStateVar):
+                entity = entities.get(effect.entity_id)
+                if entity is not None:
+                    entity["state_vars"][effect.var_name] = effect.value
+
+            elif isinstance(effect, StateVarDelta):
+                entity = entities.get(effect.entity_id)
+                if entity is not None:
+                    sv = entity["state_vars"]
+                    current = sv.get(effect.var_name, 0.0)
+                    new_val = max(0.0, min(1.0, current + effect.delta))
+                    sv[effect.var_name] = new_val
+
+            elif isinstance(effect, VoxelDelta):
+                voxels.add(effect.layer, effect.x, effect.y, effect.z, effect.delta)
+
+    def apply_effects_with_om_deposit(
+        self,
+        effects: list[Effect],
+        entities: dict[str, dict],
+        voxels: Any,
+        spawns: list,
+        removals: list,
+        events: list,
+        deposit_fn: Any | None = None,
+    ) -> None:
+        """Apply effects with organic matter deposition on death.
+
+        When a RemoveEntity effect is processed, if deposit_fn is provided,
+        it will be called to handle the OM deposit. This bridges the gap
+        between actor-based guards and engine-level OM handling.
+
+        Args:
+            effects: All effects collected from all actors this tick.
+            entities: Entity registry (mutated in place).
+            voxels: Voxel grid manager (mutated in place).
+            spawns: Deferred spawn list.
+            removals: Deferred removal list.
+            events: Event log for client broadcast.
+            deposit_fn: Callable(entity, params) -> None for OM deposition.
+        """
+        sorted_effects = sorted(
+            effects, key=lambda e: EFFECT_PRIORITY.get(e.effect_type, 9)
+        )
+
+        removed_ids: set[str] = set()
+
+        for effect in sorted_effects:
+            if isinstance(effect, RemoveEntity):
+                removals.append(effect.entity_id)
+                removed_ids.add(effect.entity_id)
+                # Deposit organic matter if handler provided
+                if deposit_fn is not None:
+                    entity = entities.get(effect.entity_id)
+                    if entity is not None:
+                        params_dict = effect.params
+                        deposit_fn(entity, params_dict)
+
+            elif isinstance(effect, StateTransition):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    old_state = entity["state"]
+                    entity["state"] = effect.new_state
+                    if old_state != effect.new_state:
+                        events.append({
+                            "type": "STATE_CHANGE",
+                            "tick": effect.tick,
+                            "source_id": effect.entity_id,
+                            "target_id": None,
+                            "position": entity["position"],
+                            "prev_state": old_state,
+                            "new_state": effect.new_state,
+                        })
+
+            elif isinstance(effect, SetStateVar):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity["state_vars"][effect.var_name] = effect.value
+
+            elif isinstance(effect, StateVarDelta):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    sv = entity["state_vars"]
+                    current = sv.get(effect.var_name, 0.0)
+                    new_val = max(0.0, min(1.0, current + effect.delta))
+                    sv[effect.var_name] = new_val
+
+            elif isinstance(effect, LingerEffect):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity["_linger"] = effect.linger_ticks
+                    entity["velocity"] = [0.0, 0.0, 0.0]
+
+            elif isinstance(effect, ClearTarget):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity["_target"] = None
+
+            elif isinstance(effect, SetTarget):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity["_target"] = effect.position
+
+            elif isinstance(effect, VoxelDelta):
+                voxels.add(effect.layer, effect.x, effect.y, effect.z, effect.delta)
+
+            elif isinstance(effect, DepositOrganicMatter):
+                if deposit_fn is not None:
+                    # Create a temporary entity dict for the deposit handler
+                    temp_entity = {
+                        "position": effect.position,
+                        "type": effect.type,
+                        "species": effect.species,
+                        "metadata": effect.metadata,
+                    }
+                    deposit_fn(temp_entity, effect.params)
+
+            elif isinstance(effect, SpawnEntity):
+                spawns.append({
+                    "id": effect.entity_id,
+                    "type": effect.type,
+                    "species": effect.species,
+                    "position": effect.position,
+                    "metadata": effect.metadata,
+                    "state_vars": effect.state_vars,
+                    "skeleton_id": effect.skeleton_id,
+                })
+
+            elif isinstance(effect, EventRecord):
+                events.append({
+                    "type": effect.event_type,
+                    "tick": effect.tick,
+                    "source_id": effect.source_id,
+                    "target_id": effect.target_id,
+                    "position": effect.position,
+                    **effect.extra,
+                })

@@ -62,7 +62,16 @@ import math
 import random
 from typing import Any
 
-from .actors import ActorRegistry, InteractionContext, build_interaction_registry
+from .actors import (
+    FlowActor,
+    FlowContext,
+    GuardActor,
+    GuardContext,
+    InteractionContext,
+    build_flow_registry,
+    build_guard_registry,
+    build_interaction_registry,
+)
 from .biome import BiomeConfig, get_biome_config
 from .effects import EffectBus
 from .entities import init_entity, is_alive, is_mobile
@@ -298,8 +307,10 @@ class EcosystemEngine:
         # ── Effect bus (Phase 1 refactoring) ──
         self.effect_bus = EffectBus()
 
-        # ── Actor registry (Phase 1 refactoring) ──
+        # ── Actor registries (Phase 1 + Phase 2 refactoring) ──
         self.actor_registry = build_interaction_registry(self.compiled)
+        self.flow_actor_registry = build_flow_registry(self.compiled)
+        self.guard_actor_registry = build_guard_registry(self.compiled)
         self._is_legacy = isinstance(self.compiled, LegacyParams)
 
         # ── Randomization (opt-in via JSON) ──
@@ -387,9 +398,26 @@ class EcosystemEngine:
         self._rebuild_spatial_index()
 
         # Phase 1: Flow — continuous state variable updates
-        for entity in list(self.entities.values()):
-            if is_alive(entity):
-                self._apply_flow(entity, dt)
+        if self._is_legacy:
+            for entity in list(self.entities.values()):
+                if is_alive(entity):
+                    self._apply_flow(entity, dt)
+        else:
+            flow_effects = []
+            for entity in list(self.entities.values()):
+                if not is_alive(entity):
+                    continue
+                actor = self.flow_actor_registry.get(entity.get("species"))
+                if actor:
+                    ctx = self._build_flow_context(entity, dt)
+                    effects = actor.resolve(ctx)
+                    flow_effects.extend(effects)
+            # Apply flow effects atomically (StateVarDelta only — no entity lifecycle)
+            self.effect_bus.apply_flow_batch(
+                flow_effects,
+                self.entities,
+                self.voxels,
+            )
 
         # Phase 2: Interactions — entity↔entity events (actor-based)
         if self._is_legacy:
@@ -419,9 +447,30 @@ class EcosystemEngine:
             )
 
         # Phase 3: Guards — discrete state transitions
-        for entity in list(self.entities.values()):
-            if is_alive(entity):
-                self._evaluate_guards(entity)
+        if self._is_legacy:
+            for entity in list(self.entities.values()):
+                if is_alive(entity):
+                    self._evaluate_guards(entity)
+        else:
+            guard_effects = []
+            for entity in list(self.entities.values()):
+                if not is_alive(entity):
+                    continue
+                actor = self.guard_actor_registry.get(entity.get("species"))
+                if actor:
+                    ctx = self._build_guard_context(entity)
+                    effects = actor.resolve(ctx)
+                    guard_effects.extend(effects)
+            # Apply guard effects atomically (includes lifecycle + OM deposit)
+            self.effect_bus.apply_effects_with_om_deposit(
+                guard_effects,
+                self.entities,
+                self.voxels,
+                self._spawns,
+                self._removals,
+                self._events,
+                deposit_fn=self._deposit_organic_matter,
+            )
 
         # Phase 4: Voxel effects — entity impact on soil
         for entity in list(self.entities.values()):
@@ -988,6 +1037,69 @@ class EcosystemEngine:
             water_sources=self.water_sources,
             climate=self.climate,
             rate_multipliers=rate_multipliers,
+        )
+
+    # ═══════════════════════════════════════════════════════════════════════
+    # Phase 2 Context Builders — Flow + Guard actors (Phase 2)
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def _build_flow_context(self, entity: dict[str, Any], dt: float) -> FlowContext:
+        """Build a flow context for one entity (Phase 2).
+
+        Extends InteractionContext with dt and rain_ticks_remaining.
+        """
+        params = self._get_params(entity)
+        rate_multipliers = {
+            "consumption": self.rate_consumption,
+            "hunger": self.rate_hunger,
+            "thirst": self.rate_thirst,
+            "growth": self.rate_growth,
+            "reproduction": self.rate_reproduction,
+        }
+
+        return FlowContext(
+            tick=self.tick,
+            entity=entity,
+            voxel_grid=self.voxels,
+            biome=self.biome,
+            compiled=self.compiled,
+            params=params,
+            nearby_entities=[],  # flow actors don't need spatial queries
+            water_sources=self.water_sources,
+            climate=self.climate,
+            rate_multipliers=rate_multipliers,
+            dt=dt,
+            rain_ticks_remaining=self._rain_ticks_remaining,
+            _entities=self.entities,
+        )
+
+    def _build_guard_context(self, entity: dict[str, Any]) -> GuardContext:
+        """Build a guard context for one entity (Phase 2).
+
+        Extends InteractionContext with entities reference (for mate search,
+        support count). No nearby_entities needed — guards use full entity list.
+        """
+        params = self._get_params(entity)
+        rate_multipliers = {
+            "consumption": self.rate_consumption,
+            "hunger": self.rate_hunger,
+            "thirst": self.rate_thirst,
+            "growth": self.rate_growth,
+            "reproduction": self.rate_reproduction,
+        }
+
+        return GuardContext(
+            tick=self.tick,
+            entity=entity,
+            voxel_grid=self.voxels,
+            biome=self.biome,
+            compiled=self.compiled,
+            params=params,
+            nearby_entities=[],
+            water_sources=self.water_sources,
+            climate=self.climate,
+            rate_multipliers=rate_multipliers,
+            _entities=self.entities,
         )
 
     def _resolve_flee(self, e: dict, p: DerivedParams, pos: list[float]) -> None:

@@ -13,6 +13,8 @@ atomically at the end of each phase.
 See Also:
 - ``effects.py`` — All Effect dataclasses + EffectBus
 - ``actors/interaction_actors.py`` — FleeActor, PredationActor, HerbivoryActor, PollinationActor
+- ``actors/flow_actors.py`` — ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+- ``actors/guard_actors.py`` — ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
 """
 
 from __future__ import annotations
@@ -88,7 +90,7 @@ class InteractionActor(ABC):
     """
 
     @abstractmethod
-    def resolve(self, ctx: InteractionContext) -> list[Effect]:
+    def resolve(self, ctx: InteractionContext) -> list[Any]:
         """Evaluate conditions and return effects to apply.
 
         Args:
@@ -101,17 +103,50 @@ class InteractionActor(ABC):
         ...
 
 
+# ═══════════════════════════════════════════════════════════════════════════════
+# Flow Actor Protocol (Phase 2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class FlowContext(InteractionContext):
+    """Extended context for flow actors.
+
+    Adds dt, rain_ticks_remaining, and entities reference to the base
+    InteractionContext (needed for tree collapse pressure check).
+    """
+    dt: float = 0.1
+    rain_ticks_remaining: int = 0
+    _entities: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Guard Actor Protocol (Phase 2)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True)
+class GuardContext(InteractionContext):
+    """Extended context for guard actors.
+
+    Adds entities reference (for mate search, support count) to the base
+    InteractionContext.
+    """
+    # All entities in simulation — needed for mate search and tree collapse check
+    _entities: dict[str, Any] = field(default_factory=dict, repr=False)
+
+
 class FlowActor(InteractionActor):
     """Subtype for continuous flow actors (Phase 2)."""
 
-    def resolve(self, ctx: InteractionContext) -> list[Effect]:
+    @abstractmethod
+    def resolve(self, ctx: FlowContext) -> list[Any]:
         raise NotImplementedError
 
 
 class GuardActor(InteractionActor):
     """Subtype for discrete state transition actors (Phase 2)."""
 
-    def resolve(self, ctx: InteractionContext) -> list[Effect]:
+    @abstractmethod
+    def resolve(self, ctx: GuardContext) -> list[Any]:
         raise NotImplementedError
 
 
@@ -136,6 +171,38 @@ class InteractionActorRegistry:
         self._actors[entity_id] = actor
 
     def get(self, entity_id: str) -> InteractionActor | None:
+        return self._actors.get(entity_id)
+
+    def clear(self) -> None:
+        self._actors.clear()
+
+
+class FlowActorRegistry:
+    """Maps species IDs to their flow actor instances (Phase 2)."""
+
+    def __init__(self) -> None:
+        self._actors: dict[str, FlowActor] = {}
+
+    def register(self, entity_id: str, actor: FlowActor) -> None:
+        self._actors[entity_id] = actor
+
+    def get(self, entity_id: str) -> FlowActor | None:
+        return self._actors.get(entity_id)
+
+    def clear(self) -> None:
+        self._actors.clear()
+
+
+class GuardActorRegistry:
+    """Maps species IDs to their guard actor instances (Phase 2)."""
+
+    def __init__(self) -> None:
+        self._actors: dict[str, GuardActor] = {}
+
+    def register(self, entity_id: str, actor: GuardActor) -> None:
+        self._actors[entity_id] = actor
+
+    def get(self, entity_id: str) -> GuardActor | None:
         return self._actors.get(entity_id)
 
     def clear(self) -> None:
@@ -173,6 +240,10 @@ class ActorRegistry:
     def get_guard_actor(self, entity_id: str) -> GuardActor | None:
         return self._guard_actors.get(entity_id)
 
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Registry Builders — Called once at engine init
+# ═══════════════════════════════════════════════════════════════════════════════
 
 def build_interaction_registry(compiled: Any) -> InteractionActorRegistry:
     """Build the interaction actor registry from compiled ecology.
@@ -220,10 +291,90 @@ def build_interaction_registry(compiled: Any) -> InteractionActorRegistry:
     return registry
 
 
+def build_flow_registry(compiled: Any) -> FlowActorRegistry:
+    """Build the flow actor registry from compiled ecology (Phase 2).
+
+    Called once at engine init. Each species gets registered with its
+    appropriate flow actor based on diet_type.
+
+    Args:
+        compiled: CompiledEcology from trait_compiler.compile_world().
+
+    Returns:
+        Registry mapping species IDs to their flow actors.
+    """
+    registry = FlowActorRegistry()
+
+    for species_id in compiled.derived_params:
+        params = compiled.get_params(species_id)
+        if params is None:
+            continue
+
+        actor: FlowActor | None = None
+        if params.diet_type == "autotroph":
+            actor = ProducerFlowActor()
+        elif params.diet_type == "decomposer":
+            actor = DecomposerFlowActor()
+        else:
+            # consumer (carnivore, herbivore, omnivore, insectivore)
+            actor = ConsumerFlowActor()
+
+        if actor is not None:
+            registry.register(species_id, actor)
+
+    return registry
+
+
+def build_guard_registry(compiled: Any) -> GuardActorRegistry:
+    """Build the guard actor registry from compiled ecology (Phase 2).
+
+    Called once at engine init. Each species gets registered with its
+    appropriate guard actor based on diet_type.
+
+    Args:
+        compiled: CompiledEcology from trait_compiler.compile_world().
+
+    Returns:
+        Registry mapping species IDs to their guard actors.
+    """
+    registry = GuardActorRegistry()
+
+    for species_id in compiled.derived_params:
+        params = compiled.get_params(species_id)
+        if params is None:
+            continue
+
+        actor: GuardActor | None = None
+        if params.diet_type == "autotroph":
+            actor = ProducerGuardActor()
+        elif params.diet_type == "decomposer":
+            actor = DecomposerGuardActor()
+        else:
+            # consumer (carnivore, herbivore, omnivore, insectivore)
+            actor = ConsumerGuardActor()
+
+        if actor is not None:
+            registry.register(species_id, actor)
+
+    return registry
+
+
 # Import interaction actors here to avoid circular imports
 from .interaction_actors import (  # noqa: E402, F401
     FleeActor,
     HerbivoryActor,
     PollinationActor,
     PredationActor,
+)
+
+# Import flow and guard actors for registry builders
+from .flow_actors import (  # noqa: E402, F401
+    ConsumerFlowActor,
+    DecomposerFlowActor,
+    ProducerFlowActor,
+)
+from .guard_actors import (  # noqa: E402, F401
+    ConsumerGuardActor,
+    DecomposerGuardActor,
+    ProducerGuardActor,
 )
