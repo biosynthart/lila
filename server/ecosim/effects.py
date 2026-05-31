@@ -437,8 +437,7 @@ class EffectBus:
                 if deposit_fn is not None:
                     entity = entities.get(effect.entity_id)
                     if entity is not None:
-                        params_dict = effect.params
-                        deposit_fn(entity, params_dict)
+                        deposit_fn(entity, None)
 
             elif isinstance(effect, StateTransition):
                 entity = entities.get(effect.entity_id)

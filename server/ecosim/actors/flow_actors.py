@@ -454,6 +454,7 @@ class ProducerFlowActor:
             position=[new_x, ctx.entity["position"][1], new_z],
             metadata=dict(ctx.entity["metadata"]),
             state_vars=offspring_sv,
+            tick=ctx.tick,
         ))
 
         return effects

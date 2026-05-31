@@ -262,6 +262,7 @@ class ConsumerGuardActor:
                 position=[new_x, pos[1], new_z],
                 metadata=dict(meta),
                 state_vars=offspring_sv,
+                tick=ctx.tick,
             ),
             EventRecord(event_type="REPRODUCTION", source_id=ctx.entity["id"],
                         target_id=None, position=list(pos), tick=ctx.tick),

@@ -419,6 +419,17 @@ class EcosystemEngine:
                 self.voxels,
             )
 
+            # Movement — move consumers toward targets after state vars are updated
+            for entity in list(self.entities.values()):
+                if not is_alive(entity):
+                    continue
+                params = self._get_params(entity)
+                if params is None or params.diet_type in ("autotroph", "decomposer"):
+                    continue
+                if params.speed > 0 and entity["state"] in ACTIVE_MOVEMENT_STATES:
+                    if entity.get("_linger", 0) <= 0:
+                        self._move_toward_target(entity, params, dt)
+
         # Phase 2: Interactions — entity↔entity events (actor-based)
         if self._is_legacy:
             # Legacy mode: use inline interaction resolution
@@ -489,6 +500,7 @@ class EcosystemEngine:
         for eid in self._removals:
             self.entities.pop(eid, None)
         for spawn in self._spawns:
+            init_entity(spawn)
             self.entities[spawn["id"]] = spawn
 
         return self._build_tick_packet(dt)
@@ -1934,12 +1946,17 @@ class EcosystemEngine:
             self.voxels.add("organic_matter", gx, gy, gz, -rate)
             self.voxels.add("nutrients", gx, gy, gz, rate * DECOMP_NUTRIENT_EFFICIENCY)
 
-    def _deposit_organic_matter(self, e: dict, p: DerivedParams | None) -> None:
+    def _deposit_organic_matter(self, e: dict, p: DerivedParams | dict | None) -> None:
         """Deposit entity biomass into the organic matter voxel layer on death."""
         gx, gy, gz = self.voxels.world_to_grid(*e["position"])
         if p is not None:
-            deposit = min(OM_DEPOSIT_MAX, p.metabolic_rate * OM_DEPOSIT_SCALE)
-            deposit = max(deposit, OM_DEPOSIT_MIN)
+            mr = getattr(p, "metabolic_rate", None) or (p.get("metabolic_rate") if isinstance(p, dict) else None)
+            if mr is not None:
+                deposit = min(OM_DEPOSIT_MAX, mr * OM_DEPOSIT_SCALE)
+                deposit = max(deposit, OM_DEPOSIT_MIN)
+            else:
+                mass = e.get("metadata", {}).get("body_mass", 10.0)
+                deposit = min(0.3, mass / 500.0)
         else:
             mass = e.get("metadata", {}).get("body_mass", 10.0)
             deposit = min(0.3, mass / 500.0)
