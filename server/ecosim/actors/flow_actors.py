@@ -18,6 +18,42 @@ import math
 from typing import Any
 
 from ..biome import BiomeConfig
+from ..constants import (
+    ACTIVE_ENERGY_DRAIN_STATES,
+    COLLAPSE_HEALTH_MULTIPLIER,
+    COLLAPSE_HYDRATION_MULTIPLIER,
+    COLLAPSE_SUPPORT_THRESHOLD,
+    DRINK_RECOVERY_RATE,
+    DRINK_SOIL_DRAIN,
+    DRINK_WATER_DRAIN,
+    ENERGY_RECOVERY_STATES,
+    PLANT_BASE_GROWTH_RATE,
+    PLANT_BASE_WATER_DEMAND,
+    PLANT_DEFAULT_NUTRIENT_DEMAND,
+    PLANT_HEALTH_CRITICAL_HYDRATION,
+    PLANT_HEALTH_CRITICAL_NUTRIENTS,
+    PLANT_SOIL_UPTAKE_RATE,
+    REPRO_BUILD_MAX_HUNGER,
+    REPRO_BUILD_MIN_ENERGY,
+    REPRO_BUILD_MIN_HEALTH,
+    REPRO_DECAY_ENERGY,
+    REPRO_DECAY_HUNGER,
+    SPREAD_DENSITY_RADIUS,
+    SPREAD_MIN_GROWTH,
+    SPREAD_MIN_HEALTH,
+    SPREAD_MIN_HYDRATION,
+    SPREAD_PARENT_GROWTH_COST,
+    SPREAD_PARENT_NUTRIENT_COST,
+    SPREAD_SOIL_MIN_MOISTURE,
+    SPREAD_SOIL_MIN_NUTRIENTS,
+    STARVATION_HUNGER,
+    DEHYDRATION_HYDRATION,
+    COLONY_STRESS_ENERGY,
+    COLONY_STRESS_HUNGER,
+    WATER_DRY_THRESHOLD,
+    WATER_PROXIMITY_COLONY_FACTOR,
+    WATER_PROXIMITY_HUNGER_FACTOR,
+)
 from ..effects import (
     ClearTarget,
     EffectType,
@@ -31,51 +67,6 @@ from ..effects import (
 )
 from ..entities import is_alive
 from ..traits import DerivedParams
-
-# ── Consumer flow constants ────────────────────────────────────────────────
-ACTIVE_ENERGY_DRAIN_STATES = {"FORAGING", "HUNTING", "FLEEING"}
-ENERGY_RECOVERY_STATES = {"IDLE", "RESTING", "REPRODUCING", "SWARMING"}
-ACTIVE_MOVEMENT_STATES = {"FORAGING", "HUNTING", "FLEEING", "DRINKING", "REPRODUCING"}
-
-DRINK_RECOVERY_RATE = 0.15      # hydration gained per tick × local soil moisture
-DRINK_SOIL_DRAIN = 0.01         # soil moisture removed per drink tick
-DRINK_WATER_DRAIN = 0.02        # water source level removed per drink tick
-
-WATER_PROXIMITY_HUNGER_FACTOR = 0.5   # hunger relief = hunger_rate × this
-WATER_PROXIMITY_COLONY_FACTOR = 0.2   # colony_health recovery = energy_recovery × this
-
-REPRO_BUILD_MIN_ENERGY = 0.5    # energy must exceed this to build drive
-REPRO_BUILD_MAX_HUNGER = 0.6    # hunger below this to build drive
-REPRO_BUILD_MIN_HEALTH = 0.3    # health above this to build drive
-REPRO_DECAY_HUNGER = 0.7        # hunger above this → decay reproductive drive
-REPRO_DECAY_ENERGY = 0.3        # energy below this → decay reproductive drive
-
-STARVATION_HUNGER = 0.8         # hunger above this → health drain
-DEHYDRATION_HYDRATION = 0.15    # hydration below this → health drain
-
-COLONY_STRESS_HUNGER = 0.7      # colony_health starts draining under stress
-COLONY_STRESS_ENERGY = 0.2      # colony_health starts draining under stress
-
-
-# ── Producer flow constants ────────────────────────────────────────────────
-PLANT_BASE_WATER_DEMAND = 0.03  # base water uptake rate from soil
-PLANT_SOIL_UPTAKE_RATE = 0.1    # fraction of soil moisture available per tick
-PLANT_BASE_GROWTH_RATE = 0.05   # base growth rate (× resource availability)
-
-PLANT_HEALTH_CRITICAL_HYDRATION = 0.15  # below this, plant health degrades
-PLANT_HEALTH_CRITICAL_NUTRIENTS = 0.1   # below this, plant health degrades
-
-COLLAPSE_SUPPORT_THRESHOLD = 2
-COLLAPSE_HEALTH_MULTIPLIER = 3.0
-COLLAPSE_HYDRATION_MULTIPLIER = 2.0
-
-
-# ── Plant spreading constants ──────────────────────────────────────────────
-SPREAD_MIN_MOISTURE = 0.15
-SPREAD_MIN_NUTRIENTS = 0.10
-SPREAD_MAX_PARENT_COST = 0.3
-SPREAD_DENSITY_THRESHOLD = 8
-SPREAD_DISTANCE_TOLERANCE = 0.5
 
 
 class ConsumerFlowActor:
@@ -156,6 +147,8 @@ class ConsumerFlowActor:
                 delta=-DRINK_SOIL_DRAIN * ctx.rate_multipliers.get("thirst", 1.0) * dt,
                 tick=ctx.tick,
             ))
+            # Drain nearest water source (in-place mutation on context list)
+            self._drain_nearest_water(ctx, DRINK_WATER_DRAIN * dt)
 
         else:
             thirst = p.thirst_rate * (temp / 30.0) * dt
@@ -234,7 +227,6 @@ class ConsumerFlowActor:
     def _is_near_water(self, ctx: Any) -> bool:
         """Check if entity is near any water source."""
         pos = ctx.entity["position"]
-        WATER_DRY_THRESHOLD = 0.05
         for source in ctx.water_sources:
             if source.get("water_level", 1.0) < WATER_DRY_THRESHOLD:
                 continue
@@ -244,6 +236,21 @@ class ConsumerFlowActor:
             if dist <= source.get("radius", 1.0) + 1.0:
                 return True
         return False
+
+    @staticmethod
+    def _drain_nearest_water(ctx: Any, amount: float) -> None:
+        """Drain water from the nearest source (called during drinking)."""
+        pos = ctx.entity["position"]
+        best, best_dist = None, float("inf")
+        for source in ctx.water_sources:
+            d = math.sqrt(
+                (pos[0] - source["position"][0]) ** 2 +
+                (pos[2] - source["position"][2]) ** 2
+            )
+            if d < source.get("max_radius", 2.0) * 2 and d < best_dist:
+                best_dist, best = d, source
+        if best is not None:
+            best["water_level"] = max(0.0, best["water_level"] - amount)
 
 
 class ProducerFlowActor:
@@ -384,78 +391,136 @@ class ProducerFlowActor:
 
     @staticmethod
     def _count_support(ctx: Any) -> int:
-        """Count non-structural, non-decomposer living entities."""
+        """Count non-structural, non-decomposer living entities.
+
+        Uses ctx._get_params (callable provided by engine) to look up
+        DerivedParams for each entity. Entities with canopy_radius > 0
+        or diet_type == 'decomposer' are excluded from the count.
+        """
+        get_params = getattr(ctx, "_get_params", None)
+        if get_params is None:
+            return 0  # Can't determine support without param lookup
         count = 0
         for ent in ctx._entities.values():
             if not is_alive(ent) or ent["state"] == "DORMANT":
                 continue
-            ep = getattr(ctx, "_get_params", lambda e: None)(ent)
+            ep = get_params(ent)
             if ep is None:
                 continue
-            if ep.canopy_radius or ep.diet_type == "decomposer":
+            if (getattr(ep, "canopy_radius", None) and ep.canopy_radius > 0):
+                continue
+            if getattr(ep, "diet_type", "") == "decomposer":
                 continue
             count += 1
         return count
 
     def _try_spread(self, ctx: Any, sv: dict[str, Any], p: DerivedParams, dt: float) -> list[Any]:
-        """Vegetative spreading — returns effects for new offspring."""
-        if sv["growth"] < 0.3 or sv["health"] < 0.2:
+        """Vegetative spreading — returns effects for new offspring.
+
+        Matches engine inline behavior:
+        - Parent must meet health/hydration/growth thresholds
+        - Random chance gate using spread_chance × rate_reproduction
+        - Density check: no other autotroph within SPREAD_DENSITY_RADIUS
+        - Soil quality check at target position
+        - Fixed parent cost (growth -0.1, nutrients -0.05)
+        """
+        import random as _random
+
+        # Threshold checks — must meet all three
+        if (sv.get("health", 1.0) < SPREAD_MIN_HEALTH
+                or sv.get("hydration", 1.0) < SPREAD_MIN_HYDRATION
+                or sv.get("growth", 0.1) < SPREAD_MIN_GROWTH):
             return []
 
-        gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
-        soil_moisture = ctx.voxel_grid.get("moisture", gx, gy, gz)
-        soil_nutrients = ctx.voxel_grid.get("nutrients", gx, gy, gz)
+        # Cooldown check
+        cooldown = ctx.entity.get("_spread_cooldown", 0)
+        if cooldown > 0:
+            effects: list[Any] = [SetStateVar(
+                entity_id=ctx.entity["id"], var_name="_spread_cooldown",
+                value=float(cooldown - 1), tick=ctx.tick,
+            )]
+            return effects
 
-        if soil_moisture < SPREAD_MIN_MOISTURE or soil_nutrients < SPREAD_MIN_NUTRIENTS:
+        # Random chance gate (uses spread_chance from DerivedParams)
+        rate_reproduction = ctx.rate_multipliers.get("reproduction", 1.0)
+        if _random.random() > p.spread_chance * rate_reproduction:
             return []
 
-        # Check density in spread range
         spread_range = p.spread_range or 2.0
-        count_in_range = 0
+        # Pick a random position within spread range
+        pos = ctx.entity["position"]
+        spread_pos = [
+            pos[0] + _random.uniform(-spread_range, spread_range),
+            0.0,
+            pos[2] + _random.uniform(-spread_range, spread_range),
+        ]
+
+        # Density check — no other autotroph within SPREAD_DENSITY_RADIUS
+        get_params = getattr(ctx, "_get_params", None)
         for ent in ctx._entities.values():
             if not is_alive(ent) or ent["state"] == "DORMANT":
                 continue
-            dx = ent["position"][0] - ctx.entity["position"][0]
-            dz = ent["position"][2] - ctx.entity["position"][2]
+            if ent["id"] == ctx.entity["id"]:
+                continue
+            # Check if autotroph via params or entity type
+            ep = get_params(ent) if get_params else None
+            is_autotroph = (
+                (ep is not None and getattr(ep, "diet_type", "") == "autotroph")
+                or ent.get("type") in ("PLANT", "TREE")
+            )
+            if not is_autotroph:
+                continue
+            dx = ent["position"][0] - spread_pos[0]
+            dz = ent["position"][2] - spread_pos[2]
             dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= spread_range + SPREAD_DISTANCE_TOLERANCE:
-                count_in_range += 1
+            if dist <= SPREAD_DENSITY_RADIUS:
+                # Set cooldown and abort
+                return [SetStateVar(
+                    entity_id=ctx.entity["id"], var_name="_spread_cooldown",
+                    value=float(p.spread_cooldown // 2), tick=ctx.tick,
+                )]
 
-        if count_in_range >= SPREAD_DENSITY_THRESHOLD:
+        # Soil quality check at target position
+        gx, gy, gz = ctx.voxel_grid.world_to_grid(*spread_pos)
+        if (ctx.voxel_grid.get("moisture", gx, gy, gz) < SPREAD_SOIL_MIN_MOISTURE
+                or ctx.voxel_grid.get("nutrients", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
             return []
 
-        # Parent resource cost
-        parent_cost = min(sv["growth"] * 0.3, SPREAD_MAX_PARENT_COST)
-        effects: list[Any] = [SetStateVar(
-            entity_id=ctx.entity["id"], var_name="growth",
-            value=max(0.0, sv["growth"] - parent_cost), tick=ctx.tick,
-        )]
-
-        # Create offspring at nearby position
-        import random as _random
-        angle = _random.uniform(0, 2 * math.pi)
-        offset = spread_range * 0.5 * _random.uniform(0.5, 1.0)
-        new_x = ctx.entity["position"][0] + math.cos(angle) * offset
-        new_z = ctx.entity["position"][2] + math.sin(angle) * offset
-
-        # Offspring inherits parent state with reduced growth/health
+        # Offspring state vars (matches engine inline)
         offspring_sv = {
-            "hydration": sv.get("hydration", 1.0),
-            "growth": max(0.05, sv["growth"] - parent_cost) * 0.5,
-            "health": sv.get("health", 1.0) * 0.8,
-            "nutrient_store": sv.get("nutrient_store", 0.0),
+            "growth": 0.05,
+            "hydration": ctx.voxel_grid.get("moisture", gx, gy, gz) * 0.8,
+            "nutrient_store": 0.3,
+            "health": 0.8,
             "age": 0.0,
         }
 
-        effects.append(SpawnEntity(
-            entity_id=f"{ctx.entity['species']}_spread_{ctx.tick}",
-            type=ctx.entity["type"],
-            species=ctx.entity.get("species"),
-            position=[new_x, ctx.entity["position"][1], new_z],
-            metadata=dict(ctx.entity["metadata"]),
-            state_vars=offspring_sv,
-            tick=ctx.tick,
-        ))
+        effects = [
+            # Parent pays fixed cost to spread
+            StateVarDelta(
+                entity_id=ctx.entity["id"], var_name="growth",
+                delta=-SPREAD_PARENT_GROWTH_COST, tick=ctx.tick,
+            ),
+            StateVarDelta(
+                entity_id=ctx.entity["id"], var_name="nutrient_store",
+                delta=-SPREAD_PARENT_NUTRIENT_COST, tick=ctx.tick,
+            ),
+            # Set spread cooldown on parent
+            SetStateVar(
+                entity_id=ctx.entity["id"], var_name="_spread_cooldown",
+                value=float(p.spread_cooldown), tick=ctx.tick,
+            ),
+            # Spawn child plant
+            SpawnEntity(
+                entity_id=f"{ctx.entity['id']}_s{ctx.tick}",
+                type=ctx.entity["type"],
+                species=ctx.entity.get("species"),
+                position=spread_pos,
+                metadata=dict(ctx.entity["metadata"]),
+                state_vars=offspring_sv,
+                tick=ctx.tick,
+            ),
+        ]
 
         return effects
 
@@ -515,5 +580,5 @@ class DecomposerFlowActor:
 
     @staticmethod
     def _ensure_decomposer_vars(sv: dict[str, Any]) -> None:
-        sv.setdefault("activity", 0.0)
-        sv.setdefault("population", 1.0)
+        sv.setdefault("activity", 0.5)
+        sv.setdefault("population", 0.5)

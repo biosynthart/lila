@@ -17,6 +17,21 @@ from __future__ import annotations
 import math
 from typing import Any
 
+from ..constants import (
+    CARNIVORE_HUNT_HUNGER,
+    CHILD_COLONY_FLOOR,
+    CHILD_COLONY_INHERIT,
+    CHILD_ENERGY_FLOOR,
+    CHILD_ENERGY_INHERIT,
+    CHILD_HEALTH_FLOOR,
+    CHILD_HEALTH_INHERIT,
+    CHILD_HUNGER_INHERIT,
+    DORMANCY_RECOVERY_EXIT_HEALTH,
+    OM_DEPOSIT_MAX,
+    OM_DEPOSIT_MIN,
+    OM_DEPOSIT_SCALE,
+    SPAWN_OFFSET,
+)
 from ..effects import (
     DepositOrganicMatter,
     EventRecord,
@@ -27,16 +42,6 @@ from ..effects import (
 )
 from ..entities import is_alive
 from ..traits import DerivedParams
-
-
-# ── Guard constants ────────────────────────────────────────────────────────
-CARNIVORE_HUNT_HUNGER = 0.5     # hunger above this → HUNTING instead of FORAGING
-DORMANCY_RECOVERY_EXIT_HEALTH = 0.2  # health above this exits dormancy
-
-# Organic matter deposit on death
-OM_DEPOSIT_SCALE = 0.15         # body mass → organic matter conversion
-OM_DEPOSIT_MIN = 0.002          # minimum deposit for any entity
-OM_DEPOSIT_MAX = 0.5            # maximum deposit per cell
 
 
 class ConsumerGuardActor:
@@ -213,60 +218,92 @@ class ConsumerGuardActor:
         return False
 
     def _reproduction_effects(self, ctx: Any) -> list[Any]:
-        """Generate reproduction effects (offspring spawn + event)."""
+        """Generate reproduction effects (offspring spawn + event).
+
+        Matches engine inline behavior:
+        - Parent pays energy cost from DerivedParams
+        - Colony health cost for insect-type entities
+        - Clutch size from DerivedParams (can be > 1)
+        - Child inheritance with proper floors (generational decline)
+        """
+        import random as _random
+
         p = ctx.params
         sv = ctx.entity["state_vars"]
         meta = ctx.entity["metadata"]
         pos = ctx.entity["position"]
+        effects: list[Any] = []
 
-        # Offspring position — near parent with small offset
-        import random as _random
-        angle = _random.uniform(0, 2 * math.pi)
-        offset = p.sensory_range * 0.3 * _random.uniform(0.5, 1.0)
-        new_x = pos[0] + math.cos(angle) * offset
-        new_z = pos[2] + math.sin(angle) * offset
+        # ── Parent reproduction cost ──
+        # Reset reproductive drive and pay energy cost
+        effects.append(StateVarDelta(
+            entity_id=ctx.entity["id"], var_name="reproductive_drive",
+            delta=-sv.get("reproductive_drive", 0.0), tick=ctx.tick,
+        ))
+        effects.append(StateVarDelta(
+            entity_id=ctx.entity["id"], var_name="energy",
+            delta=-p.parent_energy_cost, tick=ctx.tick,
+        ))
 
-        # Offspring inherits parent state with reduced values (generational decline)
-        offspring_sv = {
-            "hunger": sv.get("hunger", 0.5) * 0.3,
-            "energy": min(1.0, sv.get("energy", 1.0) * 0.9),
-            "hydration": sv.get("hydration", 1.0),
-            "health": sv.get("health", 1.0),
-            "reproductive_drive": 0.0,
-            "age": 0.0,
-        }
-
-        if "colony_health" in sv:
-            offspring_sv["colony_health"] = sv["colony_health"] * 0.9
-
-        # Reproduction cost to parent colony health (insects)
-        parent_effects: list[Any] = []
-        if "colony_health" in sv and p.diet_type == "insect":
-            colony_cost = min(sv["colony_health"], 0.3)
-            parent_effects.append(SetStateVar(
+        # Colony health cost for insect-type entities (check type, not diet_type)
+        if "colony_health" in sv and ctx.entity.get("type") == "INSECT":
+            colony_cost = p.parent_energy_cost * 0.3
+            effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="colony_health",
-                value=max(0.0, sv["colony_health"] - colony_cost), tick=ctx.tick,
+                delta=-colony_cost, tick=ctx.tick,
             ))
 
-        # Offspring state vars depend on type
-        if ctx.entity.get("type") == "INSECT":
-            offspring_sv.setdefault("activity", 1.0)
-            offspring_sv.setdefault("population", 1.0)
+        # ── Spawn offspring (clutch_size from DerivedParams) ──
+        clutch_size = p.clutch_size if p.clutch_size > 0 else 1
+        for i in range(clutch_size):
+            # Offspring position — near parent with small offset
+            new_x = pos[0] + _random.uniform(-SPAWN_OFFSET, SPAWN_OFFSET)
+            new_z = pos[2] + _random.uniform(-SPAWN_OFFSET, SPAWN_OFFSET)
 
-        effects = parent_effects + [
-            StateTransition(entity_id=ctx.entity["id"], new_state="REPRODUCING", tick=ctx.tick),
-            SpawnEntity(
-                entity_id=f"{ctx.entity['species']}_child_{ctx.tick}_{_random.randint(0, 999)}",
-                type=ctx.entity["type"],
-                species=ctx.entity.get("species"),
-                position=[new_x, pos[1], new_z],
-                metadata=dict(meta),
-                state_vars=offspring_sv,
-                tick=ctx.tick,
-            ),
-            EventRecord(event_type="REPRODUCTION", source_id=ctx.entity["id"],
-                        target_id=None, position=list(pos), tick=ctx.tick),
-        ]
+            # Child inherits parent stress (generational decline) with floors
+            offspring_sv: dict[str, float] = {
+                "hunger": sv.get("hunger", 0.5) * CHILD_HUNGER_INHERIT,
+                "energy": max(CHILD_ENERGY_FLOOR, sv.get("energy", 1.0) * CHILD_ENERGY_INHERIT),
+                "hydration": sv.get("hydration", 1.0),
+                "health": max(CHILD_HEALTH_FLOOR, sv.get("health", 1.0) * CHILD_HEALTH_INHERIT),
+                "reproductive_drive": 0.0,
+                "age": 0.0,
+            }
+
+            if "colony_health" in sv:
+                offspring_sv["colony_health"] = max(
+                    CHILD_COLONY_FLOOR, sv["colony_health"] * CHILD_COLONY_INHERIT)
+
+            # Insect-specific state vars
+            if ctx.entity.get("type") == "INSECT":
+                offspring_sv.setdefault("activity", 1.0)
+                offspring_sv.setdefault("population", 1.0)
+
+            child_id = f"{ctx.entity['id']}_child_{ctx.tick}_{_random.randint(0, 999)}"
+            effects.extend([
+                SpawnEntity(
+                    entity_id=child_id,
+                    type=ctx.entity["type"],
+                    species=ctx.entity.get("species"),
+                    position=[new_x, pos[1], new_z],
+                    metadata=dict(meta),
+                    state_vars=offspring_sv,
+                    skeleton_id=ctx.entity.get("skeleton_id"),
+                    tick=ctx.tick,
+                ),
+                EventRecord(
+                    event_type="REPRODUCTION",
+                    source_id=ctx.entity["id"],
+                    target_id=child_id,
+                    position=[new_x, pos[1], new_z],
+                    tick=ctx.tick,
+                ),
+            ])
+
+        # State transition to REPRODUCING (applied after spawns so parent stays alive)
+        effects.append(StateTransition(
+            entity_id=ctx.entity["id"], new_state="REPRODUCING", tick=ctx.tick,
+        ))
 
         return effects
 

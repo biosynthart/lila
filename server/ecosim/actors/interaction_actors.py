@@ -27,6 +27,17 @@ import math
 import random
 from typing import Any
 
+from ..constants import (
+    FLEE_ESCAPE_DISTANCE,
+    FLEE_TRIGGER_DISTANCE,
+    HERBIVORY_CONSUME_DISTANCE,
+    HERBIVORY_MIN_HUNGER,
+    OM_DEPOSIT_MAX,
+    OM_DEPOSIT_MIN,
+    OM_DEPOSIT_SCALE,
+    POLLINATION_HEALTH_BOOST,
+    PREDATION_CATCH_DISTANCE,
+)
 from ..effects import (
     ClearTarget,
     Effect,
@@ -39,23 +50,6 @@ from ..effects import (
     StateVarDelta,
     VoxelDelta,
 )
-
-
-# ═══════════════════════════════════════════════════════════════════════════════
-# Interaction Constants (from engine.py — universal simulation physics)
-# ═══════════════════════════════════════════════════════════════════════════════
-
-FLEE_TRIGGER_DISTANCE = 2.0       # predator must be this close to trigger flee
-PREDATION_CATCH_DISTANCE = 1.5    # predator must be this close to catch
-HERBIVORY_CONSUME_DISTANCE = 2.0  # herbivore must be this close to eat
-HERBIVORY_MIN_HUNGER = 0.2        # minimum hunger to trigger consumption
-FLEE_ESCAPE_DISTANCE = 8.0        # how far prey runs from predator
-POLLINATION_HEALTH_BOOST = 0.02   # health boost to pollinated plant
-
-# Organic matter deposit constants
-OM_DEPOSIT_SCALE = 0.15           # body mass → organic matter conversion
-OM_DEPOSIT_MIN = 0.002            # minimum deposit for any entity
-OM_DEPOSIT_MAX = 0.5              # maximum deposit per cell
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

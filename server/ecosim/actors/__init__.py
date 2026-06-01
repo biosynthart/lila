@@ -117,6 +117,9 @@ class FlowContext(InteractionContext):
     dt: float = 0.1
     rain_ticks_remaining: int = 0
     _entities: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Callable to look up DerivedParams for any entity by species_id.
+    # Provided by engine so actors can query other entities' traits.
+    _get_params: Any = None  # (entity: dict) -> DerivedParams | None
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -132,6 +135,9 @@ class GuardContext(InteractionContext):
     """
     # All entities in simulation — needed for mate search and tree collapse check
     _entities: dict[str, Any] = field(default_factory=dict, repr=False)
+    # Callable to look up DerivedParams for any entity by species_id.
+    # Provided by engine so actors can query other entities' traits.
+    _get_params: Any = None  # (entity: dict) -> DerivedParams | None
 
 
 class FlowActor(InteractionActor):
