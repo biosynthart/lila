@@ -120,6 +120,8 @@ class FlowContext(InteractionContext):
     # Callable to look up DerivedParams for any entity by species_id.
     # Provided by engine so actors can query other entities' traits.
     _get_params: Any = None  # (entity: dict) -> DerivedParams | None
+    # Grid max dimension — used by MovementActor for wander target clamping.
+    _grid_max: float = 31.0
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

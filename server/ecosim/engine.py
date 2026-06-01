@@ -505,6 +505,7 @@ class EcosystemEngine:
             rain_ticks_remaining=self._rain_ticks_remaining,
             _entities=self.entities,
             _get_params=self._get_params,  # for querying other entities' traits
+            _grid_max=self._grid_max,
         )
 
     def _build_guard_context(self, entity: dict[str, Any]) -> GuardContext:
@@ -540,45 +541,30 @@ class EcosystemEngine:
     def _move_toward_target(self, e: dict, p: DerivedParams, dt: float) -> None:
         """Move entity toward its current target at species-derived speed.
 
-        If no target is set, calls _pick_movement_target to select one.
-        Entities stop when they arrive within ARRIVAL_THRESHOLD of target,
-        then immediately pick a new target (same tick) so pollinators don't
-        sit still after reaching a flower that isn't yet FRUITING.
+        Target selection is now handled by MovementActor (actor-based),
+        which emits SetTarget/ClearTarget effects during the flow phase.
+        This method only performs the physical movement step.
+
+        When no target is set, the entity stops. The next tick's flow
+        phase will have MovementActor select a new target via effects.
+        On arrival within ARRIVAL_THRESHOLD, the target is cleared and
+        the entity stops — MovementActor picks a new one on the next tick.
         """
         pos = e["position"]
         target = e.get("_target")
 
         if target is None:
-            target = self._pick_movement_target(e, p)
-            if target is None:
-                e["velocity"] = [0.0, 0.0, 0.0]
-                return
-            e["_target"] = target
+            e["velocity"] = [0.0, 0.0, 0.0]
+            return
 
         dx = target[0] - pos[0]
         dz = target[2] - pos[2]
         dist = math.sqrt(dx * dx + dz * dz)
 
         if dist < ARRIVAL_THRESHOLD:
-            # Arrived — clear old target and immediately pick a new one.
-            # This prevents pollinators from sitting still after reaching a
-            # non-FRUITING flower. They'll fly to the next flower instead of
-            # waiting here for an entire tick cycle with no direction.
+            # Arrived — clear target. MovementActor will pick a new one
+            # on the next tick's flow phase.
             e["_target"] = None
-            new_target = self._pick_movement_target(e, p)
-            if new_target is not None:
-                e["_target"] = new_target
-                # Recalculate direction toward the new target and move
-                dx2 = new_target[0] - pos[0]
-                dz2 = new_target[2] - pos[2]
-                dist2 = math.sqrt(dx2 * dx2 + dz2 * dz2)
-                if dist2 >= ARRIVAL_THRESHOLD:
-                    step = min(p.speed, dist2)
-                    nx, nz = dx2 / dist2, dz2 / dist2
-                    pos[0] = max(0.0, min(self._grid_max, pos[0] + nx * step))
-                    pos[2] = max(0.0, min(self._grid_max, pos[2] + nz * step))
-                    e["velocity"] = [nx * p.speed / dt, 0.0, nz * p.speed / dt]
-                    return
             e["velocity"] = [0.0, 0.0, 0.0]
             return
 
@@ -590,6 +576,11 @@ class EcosystemEngine:
 
     def _pick_movement_target(self, e: dict, p: DerivedParams) -> list[float] | None:
         """Select a movement target based on entity state and traits.
+
+        .. deprecated:: Superseded by MovementActor (actors/movement_actors.py).
+           Target selection is now handled by the actor-based system which emits
+           SetTarget/ClearTarget effects during the flow phase. This method is
+           kept for backward compatibility but is no longer called by the engine.
 
         Priority:
         1. DRINKING → seek nearest water if not already there, else stay put
