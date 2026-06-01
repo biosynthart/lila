@@ -40,25 +40,25 @@ The name comes from the Sanskrit concept of [līlā](https://www.embodiedphiloso
 │    (one per session)    │     Serves viz HTML, streams ticks
 └──────────┬──────────────┘
            │
-┌──────────▼──────────────────────────────────────────────────────┐
-│    ecosim (Python package, stdlib only)                         │
-│  ┌─────────────────┐  ┌───────────────────────────────────────┐ │
-│  │ Hybrid Automaton│  │ Trait System (Milestone 2)            │ │
-│  │ Flow + Guards   │  │ TraitVector + Compiler                │ │
-│  ├─────────────────┤  │ Allometric Derivations                │ │
-│  │ Voxel Manager   │  │ Interaction Templates                 │ │
-│  │ 5 layers (M2)   │  ├───────────────────────────────────────┤ │
-│  │ Water System    │  │ Actor Effects Architecture (M3 Phase1)│ │
-│  │ Dynamic levels  │  │ EffectBus + Interaction Actors        │ │
-│  ├─────────────────┤  │ Dual-path: trait-based / legacy       │ │
-│  │ Two-Pool Soil   │  ├───────────────────────────────────────┤ │
-│  │ Fast/Slow (M2)  │  │ BYOM Adapters                         │ │
-│  └─────────────────┘  │ mlp/static/random                     │ │
-│                        ├──────────────────────────────────────┤ │
-│                        │ World Randomizer                     │ │
-│                        │ D4 transforms                        │ │
-│                        └──────────────────────────────────────┘ │
-└─────────────────────────────────────────────────────────────────┘
+┌──────────▼─────────────────────────────────────────────────────────┐
+│    ecosim (Python package, stdlib only)                            │
+│  ┌─────────────────┐  ┌───────────────────────────────────────┐    │
+│  │ Hybrid Automaton│  │ Trait System (Milestone 2)            │    │
+│  │ Flow + Guards   │  │ TraitVector + Compiler                │    │
+│  ├─────────────────┤  │ Allometric Derivations                │    │
+│  │ Voxel Manager   │  │ Interaction Templates                 │    │
+│  │ 5 layers (M2)   │  ├───────────────────────────────────────┤    │
+│  │ Water System    │  │ Actor Effects Architecture            │    │
+│  │ Dynamic levels  │  │ EffectBus + Flow/Guard/IX Actors      │    │
+│  ├─────────────────┤  │ Dual-path: trait-based / legacy       │    │
+│  │ Two-Pool Soil   │  ├───────────────────────────────────────┤    │
+│  │ Fast/Slow (M2)  │  │ BYOM Adapters                         │    │
+│  └─────────────────┘  │ mlp/static/random                     │    │
+│                       ├───────────────────────────────────────┤    │
+│                       │ World Randomizer                      │    │
+│                       │ D4 transforms                         │    │
+│                       └───────────────────────────────────────┘    │
+└────────────────────────────────────────────────────────────────────┘
            │
 ┌──────────▼────────────────────────────────────────────┐
 │    search/ (Shipped — Track A, rate-tuning search)    │
@@ -95,9 +95,12 @@ lila/
 │   │   ├── traits.py               # [M2] TraitVector, allometric derivations
 │   │   ├── interactions.py         # [M2] InteractionTemplate grammar
 │   │   ├── trait_compiler.py       # [M2] TraitCompiler: traits → engine params
+│   │   ├── constants.py            # [M3] Universal simulation constants (single source of truth)
 │   │   ├── effects.py              # [M3] Effect dataclasses + EffectBus
 │   │   ├── actors/                 # [M3] Actor system
-│   │   │   ├── __init__.py        # InteractionContext, InteractionActor base
+│   │   │   ├── __init__.py        # InteractionContext, FlowActor/GuardActor bases, registries
+│   │   │   ├── flow_actors.py     # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+│   │   │   ├── guard_actors.py    # ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
 │   │   │   └── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
 │   │   └── adapters/
 │   │       ├── __init__.py         # create_adapter() factory
@@ -277,7 +280,7 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 - **Docker Compose** — single command: `docker compose up --build`
 - **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
-- **GitHub CI** — pytest (84 tests) + ruff lint, Python 3.11/3.12
+- **GitHub CI** — pytest (94 tests) + ruff lint, Python 3.11/3.12
 - **uv workflow** — `uv sync` for local dev, deterministic lockfile
 - **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
 
@@ -454,7 +457,7 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Deliverable:** `examples/species_definitions.json` — 8 species trait vectors. `demo_world.json` updated with `species_definitions` key.
 
 ### Test Suite ✅
-- **84 tests passing** across `test_actors.py` (18) + `test_ecosim.py` (12) + `test_traits.py` (54)
+- **94 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54)
 - Trait derivation tests: metabolic rate, speed, sensory range, flow rates, guard thresholds
 - Interaction template tests: herbivory matching/preference, predation with mass ratios, pollination with linger/cooldown, decomposition mineralization boost
 - Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
@@ -518,10 +521,10 @@ Base classes in `ecosim/actors/__init__.py` (229 lines):
 - **FlowActor / GuardActor** — subtypes for Phase 2 ✅ (implemented)
 - **build_interaction_registry(compiled)** — maps species names to actor instances from the compiled ecology
 
-**Deliverable:** `ecosim/actors/__init__.py` (380 lines — Phase 1 + Phase 2: FlowContext/GuardContext, registries, builders)
+**Deliverable:** `ecosim/actors/__init__.py` (387 lines — Phase 1 + Phase 2: FlowContext/GuardContext, registries, builders)
 
 #### Step 3.3 — Interaction Actors ✅
-Four interaction actors in `ecosim/actors/interaction_actors.py` (481 lines):
+Four interaction actors in `ecosim/actors/interaction_actors.py` (554 lines):
 - **FleeActor** — detects predators via flee_targets from interaction matrix, emits StateTransition(FLEEING) + SetTarget(escape_pos)
 - **PredationActor** — detects prey proximity within PREDATION_CATCH_DISTANCE, emits StateVarDelta(hunger/energy for predator), SetStateVar(health=0.0) + RemoveEntity(prey), VoxelDelta(organic_matter deposit), EventRecord(PREDATION)
 - **HerbivoryActor** — detects plants in FORAGING range with hunger > threshold, emits StateVarDelta(hunger relief for herbivore), SetStateVar(growth/health reduction for plant), EventRecord(CONSUMPTION)
@@ -529,7 +532,7 @@ Four interaction actors in `ecosim/actors/interaction_actors.py` (481 lines):
 
 All actors are pure functions: read-only context → list of effects. No side effects during actor execution.
 
-**Deliverable:** `ecosim/actors/interaction_actors.py` (481 lines)
+**Deliverable:** `ecosim/actors/interaction_actors.py` (554 lines)
 
 #### Step 3.4 — Engine Integration + Dual-Path Architecture ✅
 The engine's step() method now uses a **dual-path architecture**:
@@ -560,26 +563,63 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 **Deliverable:** `ecosim/engine.py` — 514 lines added in commit ec021eb
 
 ### Test Suite ✅
-- **84 tests passing** across `test_ecosim.py` (12) + `test_traits.py` (54) + new actor/effect tests
+- **94 tests passing** across `test_ecosim.py` (12) + `test_traits.py` (54) + actor/effect tests
 - Smoke test shows state variables evolving correctly for both trait and legacy worlds
 - Bee colony transitions to FORAGING, events fire, entities move toward targets
 
 ### Milestone 3 Phase 1 Deliverables ✅
 **Shipped:**
-- `ecosim/effects.py` — Effect dataclasses + EffectBus (521 lines after Phase 2 additions)
-- `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, FlowActor/GuardActor subtypes, registries, builders (380 lines)
-- `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (481 lines)
-- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (2465 lines)
+- `ecosim/effects.py` — Effect dataclasses + EffectBus (547 lines after Phase 2 additions)
+- `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, FlowActor/GuardActor subtypes, registries, builders (387 lines)
+- `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (554 lines)
+- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (1338 lines)
 
 ### Milestone 3 Phase 2 Deliverables ✅
 **Shipped:**
-- `ecosim/actors/flow_actors.py` — ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor (518 lines)
-- `ecosim/actors/guard_actors.py` — ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor (461 lines)
+- `ecosim/actors/flow_actors.py` — ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor (577 lines)
+- `ecosim/actors/guard_actors.py` — ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor (624 lines)
 - New effect: `DepositOrganicMatter` — organic matter deposition on entity death
 - EffectBus additions: `apply_flow_batch()`, `apply_effects_with_om_deposit()`
 - Engine step(): flow/guard actors used for trait-based worlds; legacy inline functions retained as fallback
 
-**New files: 2. Modified files: 3. No new external dependencies.****
+**New files: 2. Modified files: 3. No new external dependencies.**
+
+---
+
+## Recent Changes (Post Phase 2)
+
+### Constants Module (`ecosim/constants.py`, 132 lines) ✅
+Extracted all numeric simulation constants from `engine.py` and actor files into a single source of truth module. Every constant used by the engine — drinking rates, reproductive thresholds, plant physiology, pollination distances, water physics, rain parameters, soil evaporation — now lives in one place. No module defines its own copies.
+
+**Deliverable:** `ecosim/constants.py` (132 lines) — 60+ constants organized by domain (drinking, reproduction, stress, plant physiology, spreading, dormancy, collapse, pollination, predation, movement, dispersal, child inheritance, water, rain, soil evaporation, organic matter, decomposition)
+
+### SetEntityAttr Effect Type ✅
+New effect type for entity-level attributes that live on the entity dict rather than in `state_vars`. Used for internal tracking variables like `_pollination_cooldown`, `_pollination_visits`, `_wander_cooldown`.
+
+**Deliverable:** `ecosim/effects.py` — `SetEntityAttr` dataclass + EffectBus handler (same priority as SetStateVar)
+
+### Pollinator Dispersal Mechanics ✅
+The pollination actor now enforces realistic dispersal behavior:
+- **Per-flower visitor cap** (`POLLINATOR_MAX_PER_FLOWER = 5`) — prevents unlimited clustering at a single flower
+- **Visit limit** (`POLLINATOR_VISIT_LIMIT = 4`) — after N consecutive visits, pollinator enters forced WANDERING exploration
+- **Wander cooldown** (`POLLINATOR_WANDER_COOLDOWN = 30`) — ticks to wander before re-entering FORAGING
+- **Crowd radius** (`POLLINATOR_CROWD_RADIUS = 2.5`) — radius to count "at flower" pollinators for cap enforcement
+- **Post-visit cooldown** (`POLLINATOR_POST_VISIT_COOLDOWN = 15`) — ticks after linger ends before re-pollination is allowed; prevents immediate re-pollination at the same or adjacent flowers
+- **Physical proximity check** — pollinator must arrive within `POLLINATION_VISIT_DISTANCE` (2.0) to actually pollinate; nearby_entities includes all flowers in sensory range but only close ones are visited
+
+### Actor Registry Improvements ✅
+- `InteractionActorRegistry` now maps species IDs to *lists* of actors (was single actor per entity). A species can have multiple interaction actors (e.g., FleeActor + HerbivoryActor for deer).
+- `FlowContext` and `GuardContext` gained `_get_params` callable — allows actors to query DerivedParams for other entities by species_id.
+
+### Engine Refactoring ✅
+- Constants extracted from engine.py into `constants.py` module (engine.py reduced from ~2465 → 1338 lines)
+- All actor files import constants from the shared module instead of defining local copies
+- Ruff linting resolved: StrEnum migration, unused imports removed, import sort order fixed
+
+### Test Suite ✅
+- **94 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54)
+- New pollinator dispersal tests: per-flower cap, visit limit enforcement, wander cooldown, post-visit cooldown
+- SetEntityAttr effect application tests
 
 ---
 

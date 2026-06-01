@@ -120,6 +120,8 @@ and spawns. The result is a delta-encoded tick packet streamed to
 the client over WebSocket.
 
 The engine has **zero external dependencies** — stdlib Python only.
+All numeric constants live in a single `constants.py` module. The actor system
+(flow, guard, interaction) uses immutable effects applied atomically via EffectBus.
 The worker adds `websockets`. That's the entire server.
 
 ## Bring Your Own Model
@@ -246,7 +248,14 @@ lila/
 │   │   ├── interactions.py  # Interaction templates
 │   │   ├── biome.py         # Biome presets
 │   │   ├── voxel_manager.py # Sparse 3D grid
+│   │   ├── constants.py     # Universal simulation constants (single source of truth)
 │   │   ├── model_adapter.py # BYOM protocol
+│   │   ├── effects.py       # Effect dataclasses + EffectBus (immutable effect pipeline)
+│   │   ├── actors/          # Actor system (flow, guard, interaction actors)
+│   │   │   ├── __init__.py  # InteractionContext, FlowActor/GuardActor bases, registries
+│   │   │   ├── flow_actors.py    # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+│   │   │   ├── guard_actors.py   # ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
+│   │   │   └── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
 │   │   ├── worker.py        # WebSocket server
 │   │   └── adapters/        # Built-in motor models
 │   ├── examples/            # Demo world definitions
@@ -269,6 +278,22 @@ lila/
 │   └── compose/             # Docker Compose (start here)
 └── docs/
 ```
+
+### Actor-based architecture
+
+The engine dispatches behavior through an **actor system** with three actor types:
+- **Flow actors** — continuous state evolution (hunger, thirst, growth) as effect-emitting actors
+- **Guard actors** — discrete state transitions (FORAGING → DRINKING) with hysteresis
+- **Interaction actors** — entity↔entity interactions (predation, herbivory, pollination, fleeing)
+
+Each actor reads a frozen `InteractionContext` and emits immutable effects.
+The `EffectBus` collects all effects, sorts by priority, resolves conflicts,
+and applies them atomically in a single pass. This enables deterministic replay
+and clean separation of concerns.
+
+The engine uses a **dual-path architecture**: trait-based worlds use the actor
+system; legacy worlds (without `species_definitions`) fall back to inline logic.
+This ensures backward compatibility with all existing world files.
 
 ## Background
 
@@ -329,11 +354,16 @@ and analysis recipes.
 
 The engine has transitioned from hand-crafted per-species rules to a **trait-based architecture** using allometric scaling laws. Species are defined as functional trait vectors in JSON — body mass, diet type, metabolic class, locomotion mode — and the engine derives all behavior parameters from established ecological scaling laws (Kleiber's Law, metabolic theory of ecology). Adding a wolf means writing a JSON trait vector, not new Python code.
 
+The actor system extracts entity↔entity interactions into pure functions that emit immutable effects. All numeric constants live in `constants.py` as the single source of truth.
+
 **Shipped:**
 - Trait-based species architecture — body mass → derived behavior via allometric scaling
 - Interaction templates — herbivory, predation, pollination, decomposition (parameterized, no per-species code)
 - Trait compiler — runs once at init, produces DerivedParams + interaction matrix for the engine
 - 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
+- Actor effects architecture — immutable EffectBus with flow/guard/interaction actors
+- Universal constants module (`constants.py`) — single source of truth for all simulation physics
+- Pollinator dispersal mechanics — per-flower caps, visit limits, wander cooldowns, post-visit cooldowns
 - ASAL substrate protocol — Init(θ)/Step(θ)/Render(θ) wrapping ecosim
 - Headless renderer for FM-guided evaluation (PIL, 256×256)
 - Illumination search — diversity-driven GA with CLIP ViT-B/32
