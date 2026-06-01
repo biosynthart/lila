@@ -284,7 +284,7 @@ def derive_guard_thresholds(metabolic_rate: float, traits: TraitVector) -> dict[
         "repro_drive_threshold": repro_threshold,
         "wilting_hydration": wilting_hydration,
         "wilting_nutrients": wilting_nutrients,
-        "fruiting_growth": 0.5,
+        "fruiting_growth": 0.3,   # lowered from 0.5 so flowers bloom faster
         "fruiting_health": 0.4,
         "dormancy_recovery_moisture": dormancy_moisture,
         "dormancy_recovery_nutrients": dormancy_nutrients,

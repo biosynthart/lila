@@ -41,7 +41,7 @@ PLANT_STATES = frozenset({
 TREE_STATES = PLANT_STATES
 
 INSECT_STATES = frozenset({
-    "IDLE", "FORAGING", "RESTING", "POLLINATING",
+    "IDLE", "FORAGING", "WANDERING", "RESTING", "POLLINATING",
     "SWARMING", "REPRODUCING", "DORMANT", "DEAD",
 })
 
@@ -140,6 +140,12 @@ def init_entity(raw: dict[str, Any]) -> dict[str, Any]:
     # Ensure metadata exists
     if "metadata" not in raw:
         raw["metadata"] = {}
+
+    # Apply initial entity-level attributes (e.g. _pollination_cooldown for newborns)
+    # These are set directly on the entity dict, not in state_vars.
+    initial_attrs = raw.pop("initial_attrs", None) or {}
+    for attr_name, attr_value in initial_attrs.items():
+        raw[attr_name] = attr_value
 
     return raw
 
