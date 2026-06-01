@@ -29,6 +29,24 @@ MINIMAL_WORLD = {
                  "moisture": 0.65, "organic_matter": 0.4},
         "voxel_grid": {"dimensions": [8, 8, 8], "cell_size": 1.0},
     },
+    "species_definitions": [
+        {
+            "species_id": "deer",
+            "functional_group": "herbivore",
+            "entity_class": "ANIMAL",
+            "body_mass_kg": 60.0,
+            "locomotion": "quadruped",
+            "thermoregulation": "endotherm",
+        },
+        {
+            "species_id": "meadow_grass",
+            "functional_group": "autotroph",
+            "entity_class": "PLANT",
+            "body_mass_kg": 0.5,
+            "locomotion": "sessile",
+            "thermoregulation": "ectotherm",
+        },
+    ],
     "entities": [
         {"id": "deer_01", "type": "ANIMAL", "species": "deer",
          "position": [4.0, 0.0, 4.0],

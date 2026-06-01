@@ -92,50 +92,6 @@ class CompiledEcology:
 
 
 # ─────────────────────────────────────────────────────────────────────────────
-# Legacy Params (backward compatibility)
-# ─────────────────────────────────────────────────────────────────────────────
-
-class LegacyParams:
-    """Wraps the pre-trait hard-coded behavior for worlds without species_definitions.
-
-    When the engine finds no species_definitions in the world config, it uses
-    this object. The engine's if/elif entity_type branches remain active. This
-    is a deprecation bridge — new worlds should always use trait vectors.
-
-    The LegacyParams object has the same interface as CompiledEcology but
-    returns None for everything, signaling the engine to use its built-in paths.
-    """
-
-    def __init__(self):
-        self.derived_params: dict = {}
-        self.interaction_matrix: dict = {}
-        self.resource_tags: dict = {}
-        self.decomposers: dict = {}
-        self.traits: dict = {}
-        self.flee_from: dict = {}
-        self.diet_preferences: dict = {}
-        self.is_legacy = True
-
-    def get_params(self, species_id: str) -> DerivedParams | None:
-        return None
-
-    def get_interactions(self, actor_id: str, target_id: str) -> list:
-        return []
-
-    def get_flee_targets(self, species_id: str) -> list:
-        return []
-
-    def get_diet_order(self, species_id: str) -> list:
-        return []
-
-    def is_decomposer(self, species_id: str) -> bool:
-        return False
-
-    def get_decomposer_params(self, species_id: str) -> InteractionParams | None:
-        return None
-
-
-# ─────────────────────────────────────────────────────────────────────────────
 # TraitCompiler
 # ─────────────────────────────────────────────────────────────────────────────
 
@@ -269,17 +225,20 @@ class TraitCompiler:
 # ─────────────────────────────────────────────────────────────────────────────
 
 def compile_world(world_config: dict,
-                  biome_config: dict | None = None) -> CompiledEcology | LegacyParams:
+                  biome_config: dict | None = None) -> CompiledEcology:
     """Compile a world config into engine-ready parameters.
 
-    If the world has species_definitions, compile them. Otherwise return
-    LegacyParams for backward-compatible hard-coded behavior.
+    Requires ``species_definitions`` in the world config. Raises ValueError
+    if none are found — all worlds must define their species via trait vectors.
 
     This is the main entry point the engine calls at init.
     """
     traits = parse_species_definitions(world_config)
     if not traits:
-        return LegacyParams()
+        raise ValueError(
+            "World config missing 'species_definitions'. "
+            "All worlds must define species via trait vectors."
+        )
 
     compiler = TraitCompiler(traits, biome_config)
     return compiler.compile()

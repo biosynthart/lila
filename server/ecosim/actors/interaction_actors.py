@@ -131,9 +131,7 @@ class FleeActor:
     @staticmethod
     def _get_flee_targets(species_id: str, ctx: Any) -> list[str]:
         """Get species that this entity should flee from."""
-        if hasattr(ctx.compiled, "get_flee_targets"):
-            return ctx.compiled.get_flee_targets(species_id) or []
-        return []
+        return ctx.compiled.get_flee_targets(species_id) or []
 
     @staticmethod
     def _distance(a: list[float], b: list[float]) -> float:
@@ -254,10 +252,7 @@ class PredationActor:
     @staticmethod
     def _get_prey_species(species_id: str, ctx: Any) -> list[str]:
         """Get prey species from the compiled ecology's diet order."""
-        diet_order = getattr(ctx.compiled, "get_diet_order", lambda s: [])
-        if not hasattr(ctx.compiled, "get_interactions"):
-            return []
-
+        diet_order = ctx.compiled.get_diet_order
         result = []
         for target_species, _ in diet_order(species_id):
             interactions = ctx.compiled.get_interactions(species_id, target_species)
@@ -371,9 +366,7 @@ class HerbivoryActor:
     @staticmethod
     def _get_diet_order(species_id: str, ctx: Any) -> list[tuple[str, int]]:
         """Get diet preference ordering from compiled ecology."""
-        if hasattr(ctx.compiled, "get_diet_order"):
-            return ctx.compiled.get_diet_order(species_id) or []
-        return []
+        return ctx.compiled.get_diet_order(species_id) or []
 
     @staticmethod
     def _distance(a: list[float], b: list[float]) -> float:

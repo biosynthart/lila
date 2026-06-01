@@ -43,7 +43,6 @@ from ecosim.interactions import (
 from ecosim.trait_compiler import (
     TraitCompiler,
     CompiledEcology,
-    LegacyParams,
     compile_world,
 )
 
@@ -618,11 +617,14 @@ class TestTraitCompiler:
 
 class TestCompileWorld:
 
-    def test_legacy_world_returns_legacy_params(self):
-        """World without species_definitions returns LegacyParams."""
+    def test_missing_species_definitions_raises(self):
+        """World without species_definitions raises ValueError."""
         config = {"biome": "temperate", "entities": []}
-        result = compile_world(config)
-        assert isinstance(result, LegacyParams)
+        try:
+            compile_world(config)
+            assert False, "Expected ValueError"
+        except ValueError as exc:
+            assert "species_definitions" in str(exc)
 
     def test_trait_world_returns_compiled(self):
         """World with species_definitions returns CompiledEcology."""
