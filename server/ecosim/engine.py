@@ -41,11 +41,10 @@ Every numeric constant the tick loop uses comes from DerivedParams. No hard-
 coded per-species values remain in this file. The remaining named constants
 below are universal simulation physics.
 
-Backward Compatibility
-──────────────────────
-Worlds without a ``species_definitions`` key in the JSON fall back to
-LegacyParams, which signals the engine to use its original per-species
-code paths (not included in this file).
+Requirements
+─────────────
+All worlds must include a ``species_definitions`` key. Worlds without it
+will fail at init with a clear error — there is no fallback.
 
 See Also
 ────────

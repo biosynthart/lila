@@ -38,7 +38,7 @@ class InteractionContext:
         voxel_grid: VoxelManager instance — read-only access through context.
         biome: Biome configuration for this simulation.
         compiled: CompiledEcology from trait compiler (for interaction matrix lookups).
-        params: Trait-derived parameters for the entity's species (None in legacy mode).
+        params: Trait-derived parameters for the entity's species.
         nearby_entities: Entities within sensory range (from spatial index query).
         water_sources: Water sources in the world (read-only list of dicts).
         climate: Climate parameters (temperature, humidity, etc.).
@@ -56,7 +56,7 @@ class InteractionContext:
     biome: Any  # BiomeConfig — avoid circular import
 
     # Compiled ecology from trait compiler (for interaction matrix lookups)
-    compiled: Any = None  # CompiledEcology | LegacyParams — avoid circular import
+    compiled: Any = None  # CompiledEcology — avoid circular import
 
     # Trait-derived parameters for the entity's species
     params: Any = None  # DerivedParams | None — avoid circular import
@@ -253,7 +253,7 @@ class ActorRegistry:
 # Registry Builders — Called once at engine init
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def build_interaction_registry(compiled: Any) -> InteractionActorRegistry:
+def build_interaction_registry(compiled) -> InteractionActorRegistry:
     """Build the interaction actor registry from compiled ecology.
 
     Called once at engine init. Each species gets registered with the
@@ -299,7 +299,7 @@ def build_interaction_registry(compiled: Any) -> InteractionActorRegistry:
     return registry
 
 
-def build_flow_registry(compiled: Any) -> FlowActorRegistry:
+def build_flow_registry(compiled) -> FlowActorRegistry:
     """Build the flow actor registry from compiled ecology (Phase 2).
 
     Called once at engine init. Each species gets registered with its
@@ -333,7 +333,7 @@ def build_flow_registry(compiled: Any) -> FlowActorRegistry:
     return registry
 
 
-def build_guard_registry(compiled: Any) -> GuardActorRegistry:
+def build_guard_registry(compiled) -> GuardActorRegistry:
     """Build the guard actor registry from compiled ecology (Phase 2).
 
     Called once at engine init. Each species gets registered with its
