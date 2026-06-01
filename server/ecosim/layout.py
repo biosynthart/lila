@@ -120,10 +120,6 @@ class LayoutManager:
         # Parse water sources from environment config
         water_sources = self._parse_water_sources(env)
 
-        # Seed moisture footprints around each water source
-        for source in water_sources:
-            self._init_water_source(source)
-
         return LayoutResult(entities, water_sources, self._grid_max)
 
     def randomize(
@@ -220,17 +216,7 @@ class LayoutManager:
             water_sources.append(source)
         return water_sources
 
-    def _init_water_source(self, source: dict[str, Any]) -> None:
-        """Initialize soil moisture footprint around a water source."""
-        cx, _, cz = source["position"]
-        r = source["radius"]
-        for ix in range(int(cx - r), int(cx + r) + 1):
-            for iz in range(int(cz - r), int(cz + r) + 1):
-                if (ix - cx) ** 2 + (iz - cz) ** 2 <= r * r:
-                    gx, gy, gz = self._voxels.world_to_grid(
-                        float(ix), 0.0, float(iz)
-                    )
-                    self._voxels.set("moisture", gx, gy, gz, 0.95)
+
 
     def _clamp_to_grid(self, pos: list[float]) -> list[float]:
         """Clamp position to grid bounds with margin."""

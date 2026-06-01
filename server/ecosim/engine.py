@@ -175,6 +175,10 @@ class EcosystemEngine:
         self._grid_max: float = result.grid_max
         layout.randomize(self.entities, self.water_sources)
 
+        # ── Seed water source moisture footprints (after randomization) ──
+        for source in self.water_sources:
+            self._init_water_source_moisture(source)
+
         # ── Rate multipliers (from world JSON, all default 1.0) ──
         rates = world_config.get("rates", {})
         self.rate_consumption: float = rates.get("consumption", 1.0)
@@ -591,6 +595,20 @@ class EcosystemEngine:
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 5: Water & Soil — World-Level Processes
     # ═══════════════════════════════════════════════════════════════════════
+
+    def _init_water_source_moisture(self, source: dict[str, Any]) -> None:
+        """Initialize soil moisture footprint around a water source.
+
+        Called during engine init after randomization so the footprint
+        matches the final (possibly transformed) water source position.
+        """
+        cx, _, cz = source["position"]
+        r = source["radius"]
+        for ix in range(int(cx - r), int(cx + r) + 1):
+            for iz in range(int(cz - r), int(cz + r) + 1):
+                if (ix - cx) ** 2 + (iz - cz) ** 2 <= r * r:
+                    gx, gy, gz = self.voxels.world_to_grid(float(ix), 0.0, float(iz))
+                    self.voxels.set("moisture", gx, gy, gz, 0.95)
 
     def _evaporate_soil(self, dt: float) -> None:
         """Background soil moisture evaporation (suppressed during rain)."""
