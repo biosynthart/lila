@@ -25,6 +25,7 @@ from ecosim.effects import (
     EventRecord,
     LingerEffect,
     RemoveEntity,
+    SetEntityAttr,
     SetStateVar,
     SetTarget,
     StateTransition,
@@ -374,10 +375,11 @@ class TestPollinationActor(unittest.TestCase):
         effects = actor.resolve(ctx)
 
         # Check that _pollination_cooldown is set on the pollinator (not just plant)
-        set_vars = [e for e in effects if isinstance(e, SetStateVar)]
+        # The actor uses SetEntityAttr for internal tracking vars like cooldowns
+        attr_effects = [e for e in effects if isinstance(e, SetEntityAttr)]
         pollinator_cooldowns = [
-            e for e in set_vars
-            if e.entity_id == "test_entity" and e.var_name == "_pollination_cooldown"
+            e for e in attr_effects
+            if e.entity_id == "test_entity" and e.attr_name == "_pollination_cooldown"
         ]
         self.assertTrue(len(pollinator_cooldowns) >= 1,
                         "Pollinator should have _pollination_cooldown set")
