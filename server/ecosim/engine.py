@@ -58,7 +58,6 @@ See Also
 from __future__ import annotations
 
 import math
-import random
 from typing import Any
 
 from .actors import (
@@ -97,6 +96,7 @@ from .constants import (
 )
 from .effects import EffectBus
 from .entities import init_entity, is_alive
+from .layout import LayoutManager
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
@@ -146,19 +146,12 @@ class EcosystemEngine:
         if soil:
             self.voxels.initialize_from_soil(soil)
 
-        # ── Entities ──
-        raw_entities = world_config.get("entities", [])
-        self.entities: dict[str, dict[str, Any]] = {}
-        for raw in raw_entities:
-            e = init_entity(raw)
-            self.entities[e["id"]] = e
-
-        self.tick: int = 0
-
         # ── Trait compilation ──
         # Converts species_definitions into DerivedParams + interaction matrix.
         biome_dict = {"name": self.biome_name}
         self.compiled: CompiledEcology = compile_world(world_config, biome_dict)
+
+        self.tick: int = 0
 
 
         # ── BYOM motor adapter ──
@@ -170,21 +163,13 @@ class EcosystemEngine:
             from .adapters.static import StaticMotorAdapter
             self._motor_adapter = StaticMotorAdapter()
 
-        # ── Grid bounds ──
-        self._grid_max: float = (
-            (self.voxels.dimensions[0] - 1) * self.voxels.cell_size
-        )
-
-        # ── Water sources ──
-        self.water_sources: list[dict[str, Any]] = []
-        for ws in env.get("water_sources", []):
-            source = {
-                "position": list(ws["position"]),
-                "max_radius": ws.get("radius", 2.0),
-                "radius": ws.get("radius", 2.0),
-                "water_level": 1.0,
-            }
-            self.water_sources.append(source)
+        # ── Layout loading (entities + water sources + randomization) ──
+        layout = LayoutManager(world_config, self.voxels)
+        result = layout.load()
+        self.entities: dict[str, dict[str, Any]] = result.entities
+        self.water_sources: list[dict[str, Any]] = result.water_sources
+        self._grid_max: float = result.grid_max
+        layout.randomize(self.entities, self.water_sources)
 
         # ── Rate multipliers (from world JSON, all default 1.0) ──
         rates = world_config.get("rates", {})
@@ -210,19 +195,7 @@ class EcosystemEngine:
         self.flow_actor_registry = build_flow_registry(self.compiled)
         self.guard_actor_registry = build_guard_registry(self.compiled)
 
-        # ── Randomization (opt-in via JSON) ──
-        rand_cfg = world_config.get("randomize")
-        if rand_cfg is True:
-            self._randomize_config: dict[str, Any] | None = {}
-        elif isinstance(rand_cfg, dict):
-            self._randomize_config = rand_cfg
-        else:
-            self._randomize_config = None
-        self._randomize_world()
 
-        # Initialize water source moisture footprints
-        for source in self.water_sources:
-            self._init_water_source(source)
 
     # ───────────────────────────────────────────────────────────────────────
     # Param Lookup
@@ -633,15 +606,7 @@ class EcosystemEngine:
                     self.voxels.set("moisture", x, 0, z,
                                     max(SOIL_MOISTURE_FLOOR, current - evap))
 
-    def _init_water_source(self, source: dict[str, Any]) -> None:
-        """Initialize soil moisture footprint around a water source."""
-        cx, _, cz = source["position"]
-        r = source["radius"]
-        for ix in range(int(cx - r), int(cx + r) + 1):
-            for iz in range(int(cz - r), int(cz + r) + 1):
-                if (ix - cx) ** 2 + (iz - cz) ** 2 <= r * r:
-                    gx, gy, gz = self.voxels.world_to_grid(float(ix), 0.0, float(iz))
-                    self.voxels.set("moisture", gx, gy, gz, 0.95)
+
 
     def _replenish_water_sources(self, dt: float) -> None:
         """Evaporate and replenish water sources; update soil moisture footprint."""
@@ -792,11 +757,7 @@ class EcosystemEngine:
         dz = a[2] - b[2]
         return math.sqrt(dx * dx + dz * dz)
 
-    def _clamp_to_grid(self, pos: list[float]) -> list[float]:
-        """Clamp position to grid bounds with margin."""
-        margin = 0.5
-        lo, hi = margin, self._grid_max - margin
-        return [max(lo, min(hi, pos[0])), pos[1], max(lo, min(hi, pos[2]))]
+
 
 
 
@@ -855,127 +816,4 @@ class EcosystemEngine:
             ]
         return packet
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # World Randomization (Opt-In)
-    # ═══════════════════════════════════════════════════════════════════════
 
-    def _randomize_world(self) -> None:
-        """Apply D4 symmetry transforms, jitter, and extra entities.
-
-        Only runs if the world config includes a ``randomize`` key.
-        See README for randomization options.
-        """
-        cfg = self._randomize_config
-        if cfg is None or len(self.entities) < 5:
-            return
-        import time as _time
-        rng = random.Random(int(_time.time()))
-        jitter = cfg.get("jitter", 1.5)
-        extra_grass_range = cfg.get("extra_grass", [0, 4])
-        extra_flowers_range = cfg.get("extra_flowers", [0, 2])
-        do_transform = cfg.get("transform", True)
-        center = self._grid_max / 2.0
-
-        # D4 symmetry transform (rotation + optional flip)
-        if do_transform:
-            rotation = rng.choice([0, 90, 180, 270])
-            flip_x = rng.choice([True, False])
-        else:
-            rotation, flip_x = 0, False
-
-        def transform_pos(pos):
-            x, z = pos[0] - center, pos[2] - center
-            if rotation == 90:
-                x, z = -z, x
-            elif rotation == 180:
-                x, z = -x, -z
-            elif rotation == 270:
-                x, z = z, -x
-            if flip_x:
-                x = -x
-            return self._clamp_to_grid([x + center, 0.0, z + center])
-
-        for e in self.entities.values():
-            e["position"][:] = transform_pos(e["position"])
-        for source in self.water_sources:
-            source["position"][:] = transform_pos(source["position"])
-
-        # Water source position jitter
-        for source in self.water_sources:
-            pos = source["position"]
-            pos[0] += rng.uniform(-3.0, 3.0)
-            pos[2] += rng.uniform(-3.0, 3.0)
-            pos[:] = self._clamp_to_grid(pos)
-            source["max_radius"] = max(1.0, source["max_radius"] + rng.uniform(-0.5, 0.5))
-            source["radius"] = source["max_radius"]
-
-        # Entity position jitter + state variable noise
-        for e in self.entities.values():
-            pos = e["position"]
-            pos[0] += rng.uniform(-jitter, jitter)
-            pos[2] += rng.uniform(-jitter, jitter)
-            pos[:] = self._clamp_to_grid(pos)
-            sv = e["state_vars"]
-            for key in ("hunger", "energy", "hydration", "health"):
-                if key in sv:
-                    sv[key] = max(0.0, min(1.0, sv[key] + rng.uniform(-0.05, 0.05)))
-
-        # Extra grass and flower spawns
-        grass_tpl = flower_tpl = None
-        for e in self.entities.values():
-            if e.get("species") == "meadow_grass" and grass_tpl is None:
-                grass_tpl = e
-            if e.get("species") == "wildflower" and flower_tpl is None:
-                flower_tpl = e
-
-        if grass_tpl:
-            for i in range(rng.randint(*extra_grass_range)):
-                pos = self._clamp_to_grid([
-                    rng.uniform(3.0, self._grid_max - 3.0), 0.0,
-                    rng.uniform(3.0, self._grid_max - 3.0)])
-                child = init_entity({
-                    "id": f"grass_r{i}", "type": "PLANT", "species": "meadow_grass",
-                    "position": pos, "metadata": dict(grass_tpl["metadata"]),
-                    "state_vars": {"growth": rng.uniform(0.05, 0.3),
-                                   "hydration": rng.uniform(0.6, 1.0),
-                                   "nutrient_store": rng.uniform(0.3, 0.6),
-                                   "health": 1.0, "age": 0.0}})
-                self.entities[child["id"]] = child
-
-        if flower_tpl:
-            for i in range(rng.randint(*extra_flowers_range)):
-                pos = self._clamp_to_grid([
-                    rng.uniform(3.0, self._grid_max - 3.0), 0.0,
-                    rng.uniform(3.0, self._grid_max - 3.0)])
-                child = init_entity({
-                    "id": f"flower_r{i}", "type": "PLANT", "species": "wildflower",
-                    "position": pos, "metadata": dict(flower_tpl["metadata"]),
-                    "state_vars": {"growth": rng.uniform(0.05, 0.2),
-                                   "hydration": rng.uniform(0.6, 1.0),
-                                   "nutrient_store": rng.uniform(0.3, 0.6),
-                                   "health": 1.0, "age": 0.0}})
-                self.entities[child["id"]] = child
-
-        # Push plants out of water sources
-        self._push_entities_from_water(rng)
-
-    def _push_entities_from_water(self, rng) -> None:
-        """Move sessile entities out of water source footprints."""
-        for e in self.entities.values():
-            ep = self._get_params(e)
-            if ep and ep.locomotion in ("sessile", "rooted"):
-                pos = e["position"]
-                for source in self.water_sources:
-                    sx, _, sz = source["position"]
-                    dx, dz = pos[0] - sx, pos[2] - sz
-                    dist = math.sqrt(dx * dx + dz * dz)
-                    push_r = source["max_radius"] + 1.0
-                    if dist < push_r:
-                        if dist < 0.1:
-                            angle = rng.uniform(0, math.pi * 2)
-                            dx, dz = math.cos(angle), math.sin(angle)
-                            dist = 1.0
-                        nx, nz = dx / dist, dz / dist
-                        pos[0] = sx + nx * (push_r + 0.5)
-                        pos[2] = sz + nz * (push_r + 0.5)
-                        pos[:] = self._clamp_to_grid(pos)
