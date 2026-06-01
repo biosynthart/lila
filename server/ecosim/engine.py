@@ -97,6 +97,7 @@ from .constants import (
 from .effects import EffectBus
 from .entities import init_entity, is_alive
 from .layout import LayoutManager
+from .spatial_index import SpatialQuery
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
@@ -153,6 +154,9 @@ class EcosystemEngine:
 
         self.tick: int = 0
 
+        # ── Spatial index (neighbor queries for interaction actors) ──
+        self._spatial = SpatialQuery()
+
 
         # ── BYOM motor adapter ──
         adapters = adapters or {}
@@ -185,7 +189,6 @@ class EcosystemEngine:
         self._rain_ticks_remaining: int = 0
         self._spawns: list[dict[str, Any]] = []
         self._removals: list[str] = []
-        self._positions: dict[str, list[float]] = {}
 
         # ── Effect bus (Phase 1 refactoring) ──
         self.effect_bus = EffectBus()
@@ -261,7 +264,7 @@ class EcosystemEngine:
         self._events.clear()
         self._spawns.clear()
         self._removals.clear()
-        self._rebuild_spatial_index()
+        self._spatial.rebuild(self.entities)
 
         # Phase 1: Flow — continuous state variable updates
         flow_effects = []
@@ -422,7 +425,7 @@ class EcosystemEngine:
             search_radius = self._grid_max
         else:
             search_radius = params.sensory_range
-        nearby = self._entities_in_range(
+        nearby = self._spatial.query(
             entity["position"], search_radius, entity["id"]
         )
 
@@ -717,45 +720,7 @@ class EcosystemEngine:
         for entity, latent in zip(skeleton_entities, latents):
             entity["motion_latent"] = latent
 
-    # ═══════════════════════════════════════════════════════════════════════
-    # Spatial Helpers
-    # ═══════════════════════════════════════════════════════════════════════
 
-    def _rebuild_spatial_index(self) -> None:
-        """Rebuild the brute-force spatial index (O(n) per query).
-
-        TODO: Replace with spatial hash for O(1) neighbor queries when
-        entity count exceeds ~100.
-        """
-        self._positions = {
-            eid: list(e["position"])
-            for eid, e in self.entities.items()
-            if is_alive(e)
-        }
-
-    def _entities_in_range(
-        self, pos: list[float], radius: float, exclude_id: str | None = None,
-    ) -> list[dict[str, Any]]:
-        """Find all living entities within radius of pos (brute force)."""
-        results = []
-        r2 = radius * radius
-        for eid, epos in self._positions.items():
-            if eid == exclude_id:
-                continue
-            dx = pos[0] - epos[0]
-            dz = pos[2] - epos[2]
-            if dx * dx + dz * dz <= r2:
-                entity = self.entities.get(eid)
-                if entity and is_alive(entity):
-                    results.append(entity)
-        return results
-
-    @staticmethod
-    def _distance(a: list[float], b: list[float]) -> float:
-        """2D Euclidean distance (XZ plane, Y is vertical)."""
-        dx = a[0] - b[0]
-        dz = a[2] - b[2]
-        return math.sqrt(dx * dx + dz * dz)
 
 
 
