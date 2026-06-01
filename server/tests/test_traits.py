@@ -86,7 +86,7 @@ def make_butterfly() -> TraitVector:
         diet_breadth=["forb:fruiting"],
         trophic_level=2.0,
         reproductive_strategy="r_selected",
-        clutch_size=3,
+        clutch_size=2,
         generation_time_ticks=2000,
         thermal_range=(10, 35),
         drought_tolerance=0.1,
@@ -489,6 +489,15 @@ class TestPollination:
         params = p.compute_rates(make_butterfly(), make_wildflower(), bmr)
         assert params.linger_ticks > 0
         assert params.cooldown_ticks > 0
+
+    def test_pollination_linger_capped(self):
+        """Pollination linger ticks are capped by POLLINATION_MAX_LINGER."""
+        from ecosim.constants import POLLINATION_MAX_LINGER
+        p = Pollination()
+        bmr = derive_metabolic_rate(make_butterfly())
+        params = p.compute_rates(make_butterfly(), make_wildflower(), bmr)
+        assert params.linger_ticks <= POLLINATION_MAX_LINGER, \
+            f"Linger ({params.linger_ticks}) should be capped at {POLLINATION_MAX_LINGER}"
 
 
 class TestDecomposition:

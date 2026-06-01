@@ -12,6 +12,7 @@ from __future__ import annotations
 import unittest
 from unittest.mock import MagicMock
 
+from ecosim.actors.guard_actors import ConsumerGuardActor
 from ecosim.actors.interaction_actors import (
     FleeActor,
     HerbivoryActor,
@@ -320,6 +321,117 @@ class TestPollinationActor(unittest.TestCase):
         effects = actor.resolve(ctx)
         self.assertEqual(effects, [])
 
+    def test_no_pollination_when_post_visit_cooldown_active(self):
+        """No pollination when post-visit cooldown is still active.
+
+        After lingering ends, the butterfly has a cooldown period during which
+        it cannot re-pollinate — forcing it to fly away and explore before
+        visiting another flower.
+        """
+        p = MagicMock()
+        p.species_id = "butterfly"
+        p.diet_type = "nectarivore"
+        p.floral_affinity = True
+        ctx = make_context(params=p)
+        ctx.entity["_linger"] = 0  # Not lingering anymore
+        ctx.entity["_pollination_cooldown"] = 10  # But cooldown still active
+        actor = PollinationActor()
+        effects = actor.resolve(ctx)
+        self.assertEqual(effects, [])
+
+    def test_pollination_sets_post_visit_cooldown_on_pollinator(self):
+        """Pollination sets _pollination_cooldown on the pollinator entity.
+
+        This cooldown prevents immediate re-pollination after lingering ends,
+        forcing the butterfly to disperse across the field.
+        """
+        p = MagicMock()
+        p.species_id = "butterfly"
+        p.diet_type = "nectarivore"
+        p.floral_affinity = True
+        p.pollination_relief = 0.15
+
+        ctx = make_context(
+            params=p,
+            nearby_entities=[{
+                "id": "wildflower_1",
+                "species": "wildflower",
+                "position": [6.0, 0.0, 5.0],
+                "state": "FRUITING",
+                "state_vars": {"health": 0.8},
+                "_pollination_cooldown": 0,
+            }],
+        )
+        ctx.compiled.get_interactions.return_value = [
+            MagicMock(
+                interaction_type="pollination",
+                linger_ticks=15,
+                cooldown_ticks=30,
+            )
+        ]
+
+        actor = PollinationActor()
+        effects = actor.resolve(ctx)
+
+        # Check that _pollination_cooldown is set on the pollinator (not just plant)
+        set_vars = [e for e in effects if isinstance(e, SetStateVar)]
+        pollinator_cooldowns = [
+            e for e in set_vars
+            if e.entity_id == "test_entity" and e.var_name == "_pollination_cooldown"
+        ]
+        self.assertTrue(len(pollinator_cooldowns) >= 1,
+                        "Pollinator should have _pollination_cooldown set")
+
+    def test_no_pollination_when_flower_at_max_capacity(self):
+        """No pollination when a flower already has max pollinators lingering.
+
+        Enforces POLLINATOR_MAX_PER_FLOWER so butterflies disperse across the
+        field instead of all clustering on one plant.
+        """
+        from ecosim.constants import POLLINATOR_CROWD_RADIUS, POLLINATOR_MAX_PER_FLOWER
+
+        p = MagicMock()
+        p.species_id = "butterfly"
+        p.diet_type = "nectarivore"
+        p.floral_affinity = True
+        p.pollination_relief = 0.15
+
+        # Build a flower surrounded by max-capacity lingering pollinators
+        nearby: list[dict] = [
+            {
+                "id": "wildflower_1",
+                "species": "wildflower",
+                "position": [6.0, 0.0, 5.0],
+                "state": "FRUITING",
+                "state_vars": {"health": 0.8},
+                "_pollination_cooldown": 0,
+            },
+        ]
+        # Add max-capacity pollinators lingering near the flower
+        for i in range(POLLINATOR_MAX_PER_FLOWER):
+            nearby.append({
+                "id": f"butterfly_{i}",
+                "species": "butterfly",
+                "position": [6.1 + i * 0.1, 0.0, 5.1],  # within CROWD_RADIUS
+                "state": "FORAGING",
+                "state_vars": {"hunger": 0.5},
+                "_linger": 10,  # actively lingering at the flower
+            })
+
+        ctx = make_context(params=p, nearby_entities=nearby)
+        ctx.compiled.get_interactions.return_value = [
+            MagicMock(
+                interaction_type="pollination",
+                linger_ticks=10,
+                cooldown_ticks=30,
+            )
+        ]
+
+        actor = PollinationActor()
+        effects = actor.resolve(ctx)
+        self.assertEqual(effects, [],
+                         "Should not pollinate when flower is at max capacity")
+
     def test_pollination_when_flower_nearby(self):
         """Pollination produces correct effects when FRUITING flower is nearby."""
         p = MagicMock()
@@ -472,6 +584,174 @@ class TestEffectBus(unittest.TestCase):
 
         # 0.9 + 0.2 = 1.1 → clamped to 1.0
         self.assertEqual(entities["deer"]["state_vars"]["hunger"], 1.0)
+
+
+class TestConsumerGuardActor(unittest.TestCase):
+    """Tests for ConsumerGuardActor state transitions."""
+
+    def _make_guard_context(self, **kwargs):
+        """Build a mock GuardContext for testing."""
+        from ecosim.actors import GuardContext
+        entity_id = kwargs.pop("entity_id", "test_deer")
+        species = kwargs.pop("species", "deer")
+        state = kwargs.pop("state", "IDLE")
+        hunger = kwargs.pop("hunger", 0.5)
+        hydration = kwargs.pop("hydration", 1.0)
+        energy = kwargs.pop("energy", 0.8)
+        health = kwargs.pop("health", 1.0)
+        age = kwargs.pop("age", 0.0)
+
+        entity = {
+            "id": entity_id,
+            "type": kwargs.pop("entity_type", "ANIMAL"),
+            "species": species,
+            "state": state,
+            "position": [5.0, 0.0, 5.0],
+            "velocity": [0.0, 0.0, 0.0],
+            "state_vars": {
+                "hunger": hunger,
+                "hydration": hydration,
+                "energy": energy,
+                "health": health,
+                "age": age,
+                "reproductive_drive": 0.0,
+            },
+            "metadata": {},
+        }
+
+        p = MagicMock()
+        p.species_id = species
+        p.diet_type = kwargs.pop("diet_type", "herbivore")
+        p.speed = kwargs.pop("speed", 1.0)
+        p.hunger_rate = 0.01
+        p.thirst_rate = 0.02
+        p.energy_drain = 0.02
+        p.energy_recovery = 0.03
+        p.health_drain_starving = 0.01
+        p.health_drain_dehydrated = 0.015
+        p.hunger_enter = kwargs.pop("hunger_enter", 0.3)
+        p.hunger_exit = kwargs.pop("hunger_exit", 0.15)
+        p.hydration_enter = kwargs.pop("hydration_enter", 0.2)
+        p.hydration_exit = kwargs.pop("hydration_exit", 0.6)
+        p.energy_enter = kwargs.pop("energy_enter", 0.2)
+        p.energy_exit = kwargs.pop("energy_exit", 0.5)
+        p.repro_drive_threshold = kwargs.pop("repro_drive_threshold", 0.8)
+        p.generation_time_ticks = kwargs.pop("generation_time_ticks", 5000)
+        p.floral_affinity = kwargs.pop("floral_affinity", False)
+
+        ctx = MagicMock()
+        ctx.entity = entity
+        ctx.params = p
+        ctx.tick = 1
+        ctx._entities = {}
+        ctx.voxel_grid = MagicMock()
+        ctx.voxel_grid.world_to_grid.return_value = (5, 0, 5)
+        ctx.voxel_grid.get.return_value = 0.5
+        ctx.biome = MagicMock()
+        ctx.climate = {"temperature": 20.0}
+        ctx.rate_multipliers = {
+            "consumption": 1.0,
+            "hunger": 1.0,
+            "thirst": 1.0,
+            "growth": 1.0,
+            "reproduction": 1.0,
+        }
+
+        return ctx, entity
+
+    def test_normal_drinking_transition(self):
+        """Normal drinking transition when hydration < enter and not foraging."""
+        ctx, entity = self._make_guard_context(
+            state="IDLE",
+            hydration=0.15,
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        drinking_transitions = [t for t in transitions if t.new_state == "DRINKING"]
+        self.assertTrue(len(drinking_transitions) >= 1,
+                        "Should transition to DRINKING when hydration is low and not foraging")
+
+    def test_drinking_blocked_while_foraging_normal_hydration(self):
+        """Drinking should NOT trigger while FORAGING at normal hydration levels."""
+        ctx, entity = self._make_guard_context(
+            state="FORAGING",
+            hunger=0.5,
+            hydration=0.18,  # Below hydration_enter (0.2) but above DEHYDRATION_HYDRATION (0.15)
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        drinking_transitions = [t for t in transitions if t.new_state == "DRINKING"]
+        self.assertEqual(len(drinking_transitions), 0,
+                         "Should NOT transition to DRINKING while FORAGING at non-critical hydration")
+
+    def test_critical_dehydration_overrides_foraging(self):
+        """Critical dehydration (< DEHYDRATION_HYDRATION) should override FORAGING state.
+
+        This is the key fix for ecosystem collapse: when plants go dormant/dead,
+        herbivores stay in FORAGING but can't find food. Without this override,
+        they'd wander forever and die of dehydration without ever drinking.
+        """
+        ctx, entity = self._make_guard_context(
+            state="FORAGING",
+            hunger=0.7,
+            hydration=0.12,  # Below DEHYDRATION_HYDRATION (0.15)
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        drinking_transitions = [t for t in transitions if t.new_state == "DRINKING"]
+        self.assertTrue(len(drinking_transitions) >= 1,
+                        "Critical dehydration should override FORAGING and trigger DRINKING")
+
+    def test_critical_dehydration_overrides_hunting(self):
+        """Critical dehydration should also override HUNTING state."""
+        ctx, entity = self._make_guard_context(
+            state="HUNTING",
+            diet_type="carnivore",
+            hunger=0.8,
+            hydration=0.10,
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        drinking_transitions = [t for t in transitions if t.new_state == "DRINKING"]
+        self.assertTrue(len(drinking_transitions) >= 1,
+                        "Critical dehydration should override HUNTING and trigger DRINKING")
+
+    def test_drinking_exits_to_idle_when_hydrated(self):
+        """Entity exits DRINKING to IDLE when hydration reaches exit threshold."""
+        ctx, entity = self._make_guard_context(
+            state="DRINKING",
+            hydration=0.7,  # Above hydration_exit (0.6)
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        idle_transitions = [t for t in transitions if t.new_state == "IDLE"]
+        self.assertTrue(len(idle_transitions) >= 1,
+                        "Should exit DRINKING to IDLE when hydrated")
+
+    def test_death_still_has_highest_priority(self):
+        """Death should still override everything, including critical dehydration."""
+        ctx, entity = self._make_guard_context(
+            state="FORAGING",
+            health=0.0,
+            hydration=0.10,
+        )
+        actor = ConsumerGuardActor()
+        effects = actor.resolve(ctx)
+
+        transitions = [e for e in effects if isinstance(e, StateTransition)]
+        dying_transitions = [t for t in transitions if t.new_state == "DYING"]
+        self.assertTrue(len(dying_transitions) >= 1,
+                        "Death should have highest priority over dehydration")
 
 
 if __name__ == "__main__":

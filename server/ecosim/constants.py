@@ -64,19 +64,28 @@ COLLAPSE_HYDRATION_MULTIPLIER = 0.7 # hydration drain = base_drain × this
 
 # ── Pollination ───────────────────────────────────────────────────────────────
 POLLINATION_HEALTH_BOOST = 0.02  # health boost to pollinated plant
+POLLINATION_MAX_LINGER = 10      # hard cap on linger ticks per visit
 
 # ── Predation & herbivory distances ───────────────────────────────────────────
 FLEE_TRIGGER_DISTANCE = 2.0     # predator must be this close to trigger flee
 PREDATION_CATCH_DISTANCE = 1.5  # predator must be this close to catch
 HERBIVORY_CONSUME_DISTANCE = 2.0  # herbivore must be this close to eat
+POLLINATION_VISIT_DISTANCE = 2.0  # pollinator must be this close to visit a flower
 HERBIVORY_MIN_HUNGER = 0.2      # minimum hunger to trigger consumption
 FLEE_ESCAPE_DISTANCE = 8.0      # how far prey runs from predator
 CARNIVORE_HUNT_HUNGER = 0.5     # hunger above this → HUNTING instead of FORAGING
 
 # ── Movement ──────────────────────────────────────────────────────────────────
 ARRIVAL_THRESHOLD = 0.3         # close enough to target to stop
-WANDER_RANGE = 3.0              # random wander distance when no target
+WANDER_RANGE = 8.0              # random wander distance when no target
 POLLINATOR_CRITICAL_HUNGER = 0.7  # pollinators seek water only above this
+
+# ── Pollinator dispersal ─────────────────────────────────────────────────────
+POLLINATOR_MAX_PER_FLOWER = 5     # max pollinators lingering at one flower
+POLLINATOR_VISIT_LIMIT = 4        # visits before forced WANDERING exploration
+POLLINATOR_WANDER_COOLDOWN = 30   # ticks to wander before re-entering FORAGING
+POLLINATOR_CROWD_RADIUS = 2.5     # radius to count "at flower" pollinators
+POLLINATOR_POST_VISIT_COOLDOWN = 15  # ticks after linger ends before re-pollination
 
 # ── Child entity inheritance ──────────────────────────────────────────────────
 CHILD_HUNGER_INHERIT = 0.3      # child hunger = parent × this
@@ -119,6 +128,6 @@ OM_DEPOSIT_MAX = 0.5            # maximum deposit per cell
 DECOMP_NUTRIENT_EFFICIENCY = 0.8  # fraction of organic matter → nutrients
 
 # ── Active states (entity moves toward targets in these) ──────────────────────
-ACTIVE_MOVEMENT_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "DRINKING"})
-ACTIVE_ENERGY_DRAIN_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING"})
+ACTIVE_MOVEMENT_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "DRINKING", "SWARMING"})
+ACTIVE_ENERGY_DRAIN_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "SWARMING"})
 ENERGY_RECOVERY_STATES = frozenset({"RESTING", "IDLE"})

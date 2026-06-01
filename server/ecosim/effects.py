@@ -49,6 +49,7 @@ class EffectType(str, Enum):
     LINGER_EFFECT = "linger_effect"           # Stay at location for N ticks
     CLEAR_TARGET = "clear_target"             # Reset movement target
     SET_TARGET = "set_target"                 # Set new movement target
+    SET_ENTITY_ATTR = "set_entity_attr"       # Set entity-level attribute (not state_var)
 
     # Events (for client broadcast)
     EVENT_RECORD = "event_record"             # Log simulation event
@@ -62,6 +63,7 @@ EFFECT_PRIORITY: dict[EffectType, int] = {
     EffectType.REMOVE_ENTITY: 0,
     EffectType.STATE_TRANSITION: 1,
     EffectType.SET_STATE_VAR: 2,
+    EffectType.SET_ENTITY_ATTR: 2,         # Same priority as SetStateVar
     EffectType.LINGER_EFFECT: 3,
     EffectType.CLEAR_TARGET: 4,
     EffectType.SET_TARGET: 5,
@@ -134,6 +136,7 @@ class SpawnEntity(Effect):
     metadata: dict[str, Any]
     state_vars: dict[str, float]
     skeleton_id: str | None = None
+    initial_attrs: dict[str, float] | None = field(default=None)  # entity-level attrs
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -215,6 +218,20 @@ class SetTarget(Effect):
 # ═══════════════════════════════════════════════════════════════════════════════
 # Event Recording
 # ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True, kw_only=True)
+class SetEntityAttr(Effect):
+    """Set an entity-level attribute (direct on entity dict, not in state_vars).
+
+    Used for internal tracking variables like _pollination_cooldown,
+    _pollination_visits, _wander_cooldown that live on the entity dict
+    rather than in state_vars.
+    """
+    effect_type: EffectType = EffectType.SET_ENTITY_ATTR
+    entity_id: str
+    attr_name: str        # e.g. "_pollination_cooldown", "_pollination_visits"
+    value: float
+
 
 @dataclass(frozen=True, kw_only=True)
 class EventRecord(Effect):
@@ -319,6 +336,11 @@ class EffectBus:
                 if entity and effect.entity_id not in removed_ids:
                     entity["_target"] = None
 
+            elif isinstance(effect, SetEntityAttr):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity[effect.attr_name] = effect.value
+
             elif isinstance(effect, SetTarget):
                 entity = entities.get(effect.entity_id)
                 if entity and effect.entity_id not in removed_ids:
@@ -336,6 +358,7 @@ class EffectBus:
                     "metadata": effect.metadata,
                     "state_vars": effect.state_vars,
                     "skeleton_id": effect.skeleton_id,
+                    "initial_attrs": effect.initial_attrs or {},
                 })
 
             elif isinstance(effect, EventRecord):
@@ -479,6 +502,11 @@ class EffectBus:
                 if entity and effect.entity_id not in removed_ids:
                     entity["_target"] = None
 
+            elif isinstance(effect, SetEntityAttr):
+                entity = entities.get(effect.entity_id)
+                if entity and effect.entity_id not in removed_ids:
+                    entity[effect.attr_name] = effect.value
+
             elif isinstance(effect, SetTarget):
                 entity = entities.get(effect.entity_id)
                 if entity and effect.entity_id not in removed_ids:
@@ -507,6 +535,7 @@ class EffectBus:
                     "metadata": effect.metadata,
                     "state_vars": effect.state_vars,
                     "skeleton_id": effect.skeleton_id,
+                    "initial_attrs": effect.initial_attrs or {},
                 })
 
             elif isinstance(effect, EventRecord):

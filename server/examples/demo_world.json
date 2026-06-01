@@ -597,7 +597,7 @@
       ],
       "trophic_level": 2.0,
       "reproductive_strategy": "r_selected",
-      "clutch_size": 3,
+      "clutch_size": 2,
       "generation_time_ticks": 2000,
       "thermal_range": [
         10,

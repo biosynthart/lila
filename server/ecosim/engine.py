@@ -88,6 +88,7 @@ from .constants import (
     COLLAPSE_HYDRATION_MULTIPLIER,
     COLLAPSE_SUPPORT_THRESHOLD,
     DECOMP_NUTRIENT_EFFICIENCY,
+    DEHYDRATION_HYDRATION,
     DRINK_RECOVERY_RATE,
     DRINK_SOIL_DRAIN,
     DRINK_WATER_DRAIN,
@@ -105,6 +106,8 @@ from .constants import (
     PLANT_SOIL_UPTAKE_RATE,
     POLLINATION_HEALTH_BOOST,
     POLLINATOR_CRITICAL_HUNGER,
+    POLLINATOR_CROWD_RADIUS,
+    POLLINATOR_MAX_PER_FLOWER,
     PREDATION_CATCH_DISTANCE,
     RAIN_ANIMAL_HYDRATION,
     RAIN_MOISTURE_BOOST,
@@ -354,20 +357,46 @@ class EcosystemEngine:
             params = self._get_params(entity)
             if params is None or params.diet_type in ("autotroph", "decomposer"):
                 continue
-            if params.speed > 0 and entity["state"] in ACTIVE_MOVEMENT_STATES:
-                if entity.get("_linger", 0) <= 0:
-                    self._move_toward_target(entity, params, dt)
+
+            # Decrement linger counter (set by pollination visits, etc.)
+            linger = entity.get("_linger", 0)
+            if linger > 0:
+                entity["_linger"] = max(0, linger - 1)
+                entity["velocity"] = [0.0, 0.0, 0.0]
+                continue
+
+            # Decrement post-visit cooldown (prevents immediate re-pollination
+            # after lingering ends — forces butterfly to actually fly away before
+            # it can visit another flower).
+            poll_cooldown = entity.get("_pollination_cooldown", 0)
+            if poll_cooldown > 0:
+                entity["_pollination_cooldown"] = max(0, poll_cooldown - 1)
+
+            # Pollinators move even when IDLE/WANDERING.
+            # IDLE: actively seek and discover flowers across the field.
+            # WANDERING: wander randomly (no flower-seeking) to disperse
+            # after pollination bouts, exploring new areas.
+            can_move = (
+                entity["state"] in ACTIVE_MOVEMENT_STATES
+                or (params.floral_affinity and entity["state"] in ("IDLE", "WANDERING"))
+            )
+            if params.speed > 0 and can_move:
+                self._move_toward_target(entity, params, dt)
 
         # Phase 2: Interactions — entity↔entity events (actor-based)
         interaction_effects = []
         for entity in list(self.entities.values()):
             if not is_alive(entity):
                 continue
-            actor = self.actor_registry.get(entity.get("species"))
-            if actor:
+            actors = self.actor_registry.get(entity.get("species"))
+            if actors:
                 ctx = self._build_interaction_context(entity, dt)
-                effects = actor.resolve(ctx)
-                interaction_effects.extend(effects)
+                # Each species can have multiple interaction actors
+                # (e.g. FleeActor + HerbivoryActor for deer).
+                # Run all of them — they produce independent effects.
+                for actor in actors:
+                    effects = actor.resolve(ctx)
+                    interaction_effects.extend(effects)
         # Apply interaction effects atomically
         self.effect_bus.apply_batch(
             interaction_effects,
@@ -453,9 +482,18 @@ class EcosystemEngine:
                 rate_multipliers=rate_multipliers,
             )
 
-        # Query nearby entities using spatial index
+        # Query nearby entities using spatial index.
+        # Pollinators (butterflies, etc.) sense chemical gradients across the
+        # entire meadow — they can detect floral volatiles and nectar signals
+        # from anywhere in the field. This lets them make informed dispersal
+        # decisions (e.g., avoid crowded flowers, seek distant blooms) rather
+        # than reacting only to what's immediately nearby.
+        if params.floral_affinity:
+            search_radius = self._grid_max
+        else:
+            search_radius = params.sensory_range
         nearby = self._entities_in_range(
-            entity["position"], params.sensory_range, entity["id"]
+            entity["position"], search_radius, entity["id"]
         )
 
         return InteractionContext(
@@ -540,10 +578,12 @@ class EcosystemEngine:
         """Move entity toward its current target at species-derived speed.
 
         If no target is set, calls _pick_movement_target to select one.
-        Entities stop when they arrive within ARRIVAL_THRESHOLD of target.
+        Entities stop when they arrive within ARRIVAL_THRESHOLD of target,
+        then immediately pick a new target (same tick) so pollinators don't
+        sit still after reaching a flower that isn't yet FRUITING.
         """
-        target = e.get("_target")
         pos = e["position"]
+        target = e.get("_target")
 
         if target is None:
             target = self._pick_movement_target(e, p)
@@ -557,7 +597,25 @@ class EcosystemEngine:
         dist = math.sqrt(dx * dx + dz * dz)
 
         if dist < ARRIVAL_THRESHOLD:
+            # Arrived — clear old target and immediately pick a new one.
+            # This prevents pollinators from sitting still after reaching a
+            # non-FRUITING flower. They'll fly to the next flower instead of
+            # waiting here for an entire tick cycle with no direction.
             e["_target"] = None
+            new_target = self._pick_movement_target(e, p)
+            if new_target is not None:
+                e["_target"] = new_target
+                # Recalculate direction toward the new target and move
+                dx2 = new_target[0] - pos[0]
+                dz2 = new_target[2] - pos[2]
+                dist2 = math.sqrt(dx2 * dx2 + dz2 * dz2)
+                if dist2 >= ARRIVAL_THRESHOLD:
+                    step = min(p.speed, dist2)
+                    nx, nz = dx2 / dist2, dz2 / dist2
+                    pos[0] = max(0.0, min(self._grid_max, pos[0] + nx * step))
+                    pos[2] = max(0.0, min(self._grid_max, pos[2] + nz * step))
+                    e["velocity"] = [nx * p.speed / dt, 0.0, nz * p.speed / dt]
+                    return
             e["velocity"] = [0.0, 0.0, 0.0]
             return
 
@@ -571,7 +629,7 @@ class EcosystemEngine:
         """Select a movement target based on entity state and traits.
 
         Priority:
-        1. DRINKING → no target (guard already set the water position)
+        1. DRINKING → seek nearest water if not already there, else stay put
         2. High reproductive drive → seek nearest mate
         3. FORAGING herbivore → seek nearest food by diet preference
         4. FORAGING pollinator → seek FRUITING flower → any flower → wander → water
@@ -581,7 +639,29 @@ class EcosystemEngine:
         state = e["state"]
         pos = e["position"]
 
+        # SWARMING — colony under stress, seek water for survival.
+        # When ecosystem collapses and colony_health drops below 0.3,
+        # insects enter SWARMING. They must navigate to water sources
+        # where the near-water bonus slows hunger/colony drain while
+        # conditions recover (e.g. rain revives plants).
+        if state == "SWARMING":
+            water = self._find_nearest_water(pos)
+            if water:
+                return water
+            # No water found — wander to search
+            return self._clamp_to_grid([
+                pos[0] + random.uniform(-WANDER_RANGE, WANDER_RANGE), 0.0,
+                pos[2] + random.uniform(-WANDER_RANGE, WANDER_RANGE),
+            ])
+
         if state == "DRINKING":
+            # If already at water, stay put and drink in place.
+            # Otherwise navigate toward the nearest water source.
+            if self._is_near_water(pos):
+                return None
+            water = self._find_nearest_water(pos)
+            if water:
+                return water
             return None
 
         # Seek mates when reproductive drive is high
@@ -599,35 +679,77 @@ class EcosystemEngine:
                 if food:
                     return food
 
-            # Pollinators: seek flowers (FRUITING first, then water if hungry, then wait)
+            # Emergency: critically dehydrated forager with no food nearby.
+            # During ecosystem collapse (plants dormant/dead), herbivores would
+            # otherwise wander randomly over dead vegetation and die of dehydration.
+            # Seek water to survive until conditions improve (e.g. rain revives plants).
+            hydration = e["state_vars"].get("hydration", 1.0)
+            if hydration < DEHYDRATION_HYDRATION:
+                water = self._find_nearest_water(pos)
+                if water:
+                    return water
+
+            # Pollinators: seek flowers (FRUITING first, then any flower, water last)
             if p.floral_affinity:
                 # Priority 1: FRUITING flowers — actual nectar available
                 flower = self._find_nearest_flower(pos, self._grid_max, p)
                 if flower:
                     return flower
 
-                # No FRUITING flowers anywhere. If critically hungry, head to water:
-                # the near-water bonus slows hunger drain, and this matches the
-                # documented "stress cascade" behavior — butterflies cluster at
-                # ponds when flowers are gone. This MUST come before the dormant-
-                # flower fallback, because flowers go DORMANT (not dead) under
-                # stress, so _find_nearest_flower_any_state would otherwise always
-                # return something and the water branch would be unreachable.
-                if e["state_vars"].get("hunger", 0) > POLLINATOR_CRITICAL_HUNGER:
-                    water = self._find_nearest_water(pos)
-                    if water:
-                        return water
-
-                # Priority 3: drift toward any non-dead flower and wait for bloom
+                # Priority 2: drift toward any non-dead flower and wait for bloom.
+                # This MUST come before the water fallback. The old ordering put
+                # water first (for "stress cascade" clustering), but that created a
+                # trap: once at water, the near-water hunger bonus kept pollinators
+                # below POLLINATOR_CRITICAL_HUNGER, so they never reached the
+                # threshold needed to trigger the any-flower fallback. Result:
+                # butterflies stuck at ponds forever even with flowers blooming.
                 any_flower = self._find_nearest_flower_any_state(pos, self._grid_max, p)
                 if any_flower:
                     return any_flower
+
+                # Priority 3: no flowers found — wander randomly across the field.
+                # This is the endgame behavior when all plants are dormant/dead:
+                # butterflies fly around searching for nectar. If they become
+                # critically dehydrated, the guard actor forces DRINKING state
+                # which overrides this and sends them to water as last resort.
+                return self._clamp_to_grid([
+                    pos[0] + random.uniform(-WANDER_RANGE, WANDER_RANGE), 0.0,
+                    pos[2] + random.uniform(-WANDER_RANGE, WANDER_RANGE),
+                ])
 
         if state == "HUNTING":
             prey_species = [s for s, _ in self.compiled.get_diet_order(p.species_id)]
             target = self._find_nearest_prey(pos, p.sensory_range, prey_species)
             if target:
                 return target
+
+            # Emergency: critically dehydrated hunter with no prey nearby.
+            hydration = e["state_vars"].get("hydration", 1.0)
+            if hydration < DEHYDRATION_HYDRATION:
+                water = self._find_nearest_water(pos)
+                if water:
+                    return water
+
+        # Pollinators seek flowers when IDLE so they actively explore and
+        # discover flowers instead of sitting still waiting for hunger to build.
+        # WANDERING is excluded — during forced exploration cooldown, butterflies
+        # should wander randomly across the field to disperse, not fly back to
+        # nearby flowers (which would defeat the purpose of dispersal).
+        if p.floral_affinity and state == "IDLE":
+            flower = self._find_nearest_flower(pos, self._grid_max, p)
+            if flower:
+                return flower
+            any_flower = self._find_nearest_flower_any_state(pos, self._grid_max, p)
+            if any_flower:
+                return any_flower
+            # No flowers in range (all dormant/dead or none exist) — wander randomly.
+            # When all plants are dormant, pollinators should fly across the field
+            # searching for nectar rather than heading straight to water. If they
+            # become critically dehydrated, the guard actor forces DRINKING state.
+            return self._clamp_to_grid([
+                pos[0] + random.uniform(-WANDER_RANGE, WANDER_RANGE), 0.0,
+                pos[2] + random.uniform(-WANDER_RANGE, WANDER_RANGE),
+            ])
 
         # Default: wander randomly
         return self._clamp_to_grid([
@@ -681,14 +803,38 @@ class EcosystemEngine:
                     best_dist, best_pos = d, list(other["position"])
         return best_pos
 
+    def _count_pollinators_at_flower(self, flower_pos: list[float]) -> int:
+        """Count pollinators currently lingering at or near a flower.
+
+        Used to enforce per-flower visitor cap so butterflies disperse
+        across the field instead of all clustering on one plant.
+        """
+        count = 0
+        r2 = POLLINATOR_CROWD_RADIUS ** 2
+        for eid, epos in self._positions.items():
+            entity = self.entities.get(eid)
+            if not entity or not is_alive(entity):
+                continue
+            params = self._get_params(entity)
+            if not params or not params.floral_affinity:
+                continue
+            dx = epos[0] - flower_pos[0]
+            dz = epos[2] - flower_pos[2]
+            if dx * dx + dz * dz <= r2:
+                # Count pollinators actively lingering (from pollination visit)
+                # or very close with a target set (en route to the flower)
+                if entity.get("_linger", 0) > 0:
+                    count += 1
+        return count
+
     def _find_nearest_flower(
         self, pos: list[float], search_range: float, p: DerivedParams,
     ) -> list[float] | None:
         """Find nearest FRUITING flower matching pollinator's floral affinity.
 
         Only returns flowers that are FRUITING, have a matching pollination
-        syndrome (via the compiled interaction matrix), and are not on
-        pollination cooldown.
+        syndrome (via the compiled interaction matrix), are not on
+        pollination cooldown, and haven't reached max visitor capacity.
         """
         best_dist, best_pos = float("inf"), None
         for other in self._entities_in_range(pos, search_range):
@@ -699,7 +845,15 @@ class EcosystemEngine:
             ixns = self.compiled.get_interactions(p.species_id, other.get("species", ""))
             if not any(ix.interaction_type == "pollination" for ix in ixns):
                 continue
+            # Skip flowers at max pollinator capacity — forces dispersal
+            if self._count_pollinators_at_flower(other["position"]) >= POLLINATOR_MAX_PER_FLOWER:
+                continue
+            # Skip flowers too close — prevents re-targeting the same flower
+            # after arriving. Forces butterfly to fly to a different flower or
+            # wander away, breaking the infinite pollination loop.
             d = self._distance(pos, other["position"])
+            if d < ARRIVAL_THRESHOLD * 2:
+                continue
             if d < best_dist:
                 best_dist, best_pos = d, list(other["position"])
         return best_pos
@@ -711,16 +865,26 @@ class EcosystemEngine:
 
         Used as a waypoint when no FRUITING flowers exist — the pollinator
         flies to the flower cluster and waits for blooms instead of sitting
-        at water indefinitely.
+        at water indefinitely. Respects per-flower visitor cap.
+
+        Excludes DORMANT plants: they have no nectar and targeting them causes
+        butterflies to shuttle between dormant plants endlessly instead of
+        wandering across the field searching for active blooms.
         """
         best_dist, best_pos = float("inf"), None
         for other in self._entities_in_range(pos, search_range):
-            if other["state"] in ("DEAD", "DYING"):
+            if other["state"] in ("DEAD", "DYING", "DORMANT"):
                 continue
             ixns = self.compiled.get_interactions(p.species_id, other.get("species", ""))
             if not any(ix.interaction_type == "pollination" for ix in ixns):
                 continue
+            # Skip flowers at max pollinator capacity
+            if self._count_pollinators_at_flower(other["position"]) >= POLLINATOR_MAX_PER_FLOWER:
+                continue
+            # Skip flowers too close — prevents re-targeting after arrival
             d = self._distance(pos, other["position"])
+            if d < ARRIVAL_THRESHOLD * 2:
+                continue
             if d < best_dist:
                 best_dist, best_pos = d, list(other["position"])
         return best_pos

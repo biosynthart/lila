@@ -36,6 +36,10 @@ from ..constants import (
     OM_DEPOSIT_MIN,
     OM_DEPOSIT_SCALE,
     POLLINATION_HEALTH_BOOST,
+    POLLINATION_VISIT_DISTANCE,
+    POLLINATOR_CROWD_RADIUS,
+    POLLINATOR_MAX_PER_FLOWER,
+    POLLINATOR_POST_VISIT_COOLDOWN,
     PREDATION_CATCH_DISTANCE,
 )
 from ..effects import (
@@ -44,6 +48,7 @@ from ..effects import (
     EventRecord,
     LingerEffect,
     RemoveEntity,
+    SetEntityAttr,
     SetStateVar,
     SetTarget,
     StateTransition,
@@ -401,6 +406,17 @@ class PollinationActor:
         if ctx.entity.get("_linger", 0) > 0:
             return []
 
+        # Skip if post-visit cooldown is active — prevents immediate re-pollination
+        # after lingering ends. Forces the butterfly to actually fly away and explore
+        # before it can visit another flower.
+        if ctx.entity.get("_pollination_cooldown", 0) > 0:
+            return []
+
+        # Skip if in WANDERING state — during forced exploration cooldown,
+        # butterflies should wander randomly across the field, not pollinate.
+        if ctx.entity["state"] == "WANDERING":
+            return []
+
         for other in ctx.nearby_entities:
             other_species = other.get("species", "")
             interactions = ctx.compiled.get_interactions(ctx.params.species_id, other_species)
@@ -410,7 +426,20 @@ class PollinationActor:
                         and other["state"] == "FRUITING"
                         and other.get("_pollination_cooldown", 0) <= 0):
 
+                    # Pollinator must physically arrive at the flower.
+                    # With global chemical sensing, nearby_entities includes
+                    # all flowers in the field — but actual pollination only
+                    # happens when the butterfly is close enough to land.
+                    if self._distance(ctx.entity["position"], other["position"]) > POLLINATION_VISIT_DISTANCE:
+                        continue
+
                     plant = other
+
+                    # Enforce per-flower visitor cap — count how many other
+                    # pollinators are already lingering near this flower.
+                    if self._count_pollinators_at_flower(
+                            plant["position"], ctx.nearby_entities) >= POLLINATOR_MAX_PER_FLOWER:
+                        continue  # Flower is full, try the next one
 
                     # Build visited flowers tracking effect
                     expiry_tick = ctx.tick + ix.linger_ticks + ix.cooldown_ticks
@@ -455,7 +484,29 @@ class PollinationActor:
                             value=float(ix.cooldown_ticks),
                             tick=ctx.tick,
                         ),
+                        # Post-visit cooldown on the pollinator — prevents immediate
+                        # re-pollination after lingering ends. The butterfly must fly
+                        # away and explore for POLLINATOR_POST_VISIT_COOLDOWN ticks
+                        # before it can visit another flower.
+                        SetEntityAttr(
+                            entity_id=ctx.entity["id"],
+                            attr_name="_pollination_cooldown",
+                            value=float(POLLINATOR_POST_VISIT_COOLDOWN),
+                            tick=ctx.tick,
+                        ),
                     ])
+
+                    # Track consecutive pollination visits — incremented here in the
+                    # interaction actor so ALL pollinations are counted (not just
+                    # those during FORAGING state). Used by guard actor to force
+                    # WANDERING after N visits so butterflies explore the field.
+                    current_visits = ctx.entity.get("_pollination_visits", 0.0)
+                    effects.append(SetEntityAttr(
+                        entity_id=ctx.entity["id"],
+                        attr_name="_pollination_visits",
+                        value=current_visits + 1.0,
+                        tick=ctx.tick,
+                    ))
 
                     effects.append(EventRecord(
                         event_type="POLLINATION",
@@ -473,3 +524,32 @@ class PollinationActor:
                     return effects  # One pollination per tick
 
         return []
+
+    @staticmethod
+    def _count_pollinators_at_flower(
+            flower_pos: list[float], nearby_entities: list) -> int:
+        """Count other pollinators already lingering near a given flower.
+
+        Used to enforce POLLINATOR_MAX_PER_FLOWER so butterflies disperse
+        across the field instead of all clustering on one plant.
+        Counts entities within POLLINATOR_CROWD_RADIUS that have _linger > 0
+        (actively visiting) or have a movement target set near this flower
+        (en route to visit).
+        """
+        count = 0
+        r2 = POLLINATOR_CROWD_RADIUS ** 2
+        for entity in nearby_entities:
+            if not entity.get("_linger", 0):
+                continue
+            dx = entity["position"][0] - flower_pos[0]
+            dz = entity["position"][2] - flower_pos[2]
+            if dx * dx + dz * dz <= r2:
+                count += 1
+        return count
+
+    @staticmethod
+    def _distance(a: list[float], b: list[float]) -> float:
+        """Euclidean distance in x-z plane (2D)."""
+        dx = a[0] - b[0]
+        dz = a[2] - b[2]
+        return math.sqrt(dx * dx + dz * dz)

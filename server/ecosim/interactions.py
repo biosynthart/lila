@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .constants import POLLINATION_MAX_LINGER
 from .traits import TraitVector
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -41,6 +42,7 @@ MASS_RATIO_WINDOWS: dict[str, tuple[float, float]] = {
 }
 
 # Linger time for pollinators (ticks spent at a flower, inversely ∝ metabolic rate)
+# Hard-capped by POLLINATION_MAX_LINGER in constants.py
 POLLINATION_LINGER_BASE = 20.0      # ticks at reference metabolic rate (deer=1.0)
 POLLINATION_COOLDOWN_TICKS = 50     # ticks before a flower can be re-pollinated
 
@@ -254,11 +256,11 @@ class Pollination(InteractionTemplate):
         # Use log-scale relationship capped to a reasonable range [5, 50] ticks.
         # At deer-scale BMR (1.0): linger ≈ 20. At butterfly scale: linger ≈ 15-25.
         if actor_metabolic_rate > 0.001:
-            linger = max(5, min(50, int(POLLINATION_LINGER_BASE /
+            linger = max(5, min(POLLINATION_MAX_LINGER, int(POLLINATION_LINGER_BASE /
                                         (actor_metabolic_rate ** 0.3))))
         else:
             # Very small organisms: use moderate default
-            linger = int(POLLINATION_LINGER_BASE)
+            linger = min(POLLINATION_MAX_LINGER, int(POLLINATION_LINGER_BASE))
 
         return InteractionParams(
             interaction_type=self.interaction_type,

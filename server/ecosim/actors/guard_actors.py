@@ -26,19 +26,25 @@ from ..constants import (
     CHILD_HEALTH_FLOOR,
     CHILD_HEALTH_INHERIT,
     CHILD_HUNGER_INHERIT,
+    DEHYDRATION_HYDRATION,
     DORMANCY_RECOVERY_EXIT_HEALTH,
     OM_DEPOSIT_MAX,
     OM_DEPOSIT_MIN,
     OM_DEPOSIT_SCALE,
+    POLLINATOR_POST_VISIT_COOLDOWN,
+    POLLINATOR_VISIT_LIMIT,
+    POLLINATOR_WANDER_COOLDOWN,
     SPAWN_OFFSET,
 )
 from ..effects import (
     DepositOrganicMatter,
     EventRecord,
     RemoveEntity,
+    SetEntityAttr,
     SetStateVar,
     SpawnEntity,
     StateTransition,
+    StateVarDelta,
 )
 from ..entities import is_alive
 from ..traits import DerivedParams
@@ -126,11 +132,76 @@ class ConsumerGuardActor:
             ])
             return effects
 
-        # ── Colony swarming ──
-        if "colony_health" in sv and sv["colony_health"] < 0.3:
-            effects.append(StateTransition(
-                entity_id=ctx.entity["id"], new_state="SWARMING", tick=ctx.tick,
-            ))
+        # ── Dormant consumer recovery (rain-triggered wake-up) ──
+        # Plants have explicit dormancy recovery in ProducerGuardActor that checks
+        # soil moisture/nutrients. Consumers lacked this — they relied on slow
+        # hunger accumulation alone to exit DORMANT, which could take hundreds of
+        # ticks at low metabolic rates (e.g. butterflies: ~344 ticks from 0→0.27).
+        # After rain, soil moisture is high everywhere, so we use it as a proxy for
+        # "conditions have improved" and wake dormant consumers to IDLE immediately.
+        if ctx.entity["state"] == "DORMANT":
+            gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
+            soil_moisture = ctx.voxel_grid.get("moisture", gx, gy, gz)
+            # Use same moisture threshold as plant dormancy recovery for consistency
+            if soil_moisture > 0.25:
+                effects.append(StateTransition(
+                    entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+                ))
+                # Skip further guard checks — just wake up this tick
+                return effects
+
+        # ── Colony swarming (highest behavioral priority) ──
+        if "colony_health" in sv:
+            if ctx.entity["state"] == "SWARMING":
+                # Exit SWARMING when colony recovers above threshold.
+                # The near-water bonus (WATER_PROXIMITY_COLONY_FACTOR) helps
+                # rebuild colony_health once the insect reaches a water source,
+                # allowing it to return to normal behavior.
+                if sv["colony_health"] >= 0.35:
+                    effects.append(StateTransition(
+                        entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+                    ))
+            elif sv["colony_health"] < 0.3:
+                effects.append(StateTransition(
+                    entity_id=ctx.entity["id"], new_state="SWARMING", tick=ctx.tick,
+                ))
+
+        # ── Pollinator forced WANDERING cooldown ──
+        # When a pollinator has visited too many flowers, it is forced into
+        # WANDERING for POLLINATOR_WANDER_COOLDOWN ticks to explore new areas.
+        # During this time, decrement the countdown. When it reaches 0, reset
+        # the visit counter and let normal guard logic decide next state.
+        if p.floral_affinity and ctx.entity["state"] == "WANDERING":
+            cooldown = ctx.entity.get("_wander_cooldown", 0)
+            if cooldown > 0:
+                new_cooldown = max(0, cooldown - 1)
+                effects.append(SetEntityAttr(
+                    entity_id=ctx.entity["id"], attr_name="_wander_cooldown",
+                    value=float(new_cooldown), tick=ctx.tick,
+                ))
+                if new_cooldown == 0:
+                    # Cooldown expired — reset visit counter and transition
+                    # back to IDLE so normal guard logic (hunger-driven)
+                    # can decide the next state.
+                    effects.append(SetEntityAttr(
+                        entity_id=ctx.entity["id"], attr_name="_pollination_visits",
+                        value=0.0, tick=ctx.tick,
+                    ))
+                    effects.append(StateTransition(
+                        entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+                    ))
+            elif cooldown <= 0:
+                # Safety: pollinator in WANDERING with no active cooldown.
+                # This can happen if the FORAGING→WANDERING transition fires
+                # (hunger exit) without setting _wander_cooldown. Transition
+                # back to IDLE immediately so normal guard logic takes over.
+                effects.append(SetEntityAttr(
+                    entity_id=ctx.entity["id"], attr_name="_pollination_visits",
+                    value=0.0, tick=ctx.tick,
+                ))
+                effects.append(StateTransition(
+                    entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+                ))
 
         # ── Fleeing (managed by interaction resolver) ──
         elif ctx.entity["state"] == "FLEEING":
@@ -139,24 +210,53 @@ class ConsumerGuardActor:
                     entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                 ))
 
-        # ── Drinking (hysteresis) ──
+        # ── Reproduction exit — one-time event, then return to normal behavior. ──
+        # After spawning offspring and resetting reproductive_drive to 0, the entity
+        # must leave REPRODUCING so it can forage/drink/rest again. Since drive is
+        # permanently at 0, it will never reproduce a second time.
+        elif ctx.entity["state"] == "REPRODUCING":
+            effects.append(StateTransition(
+                entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+            ))
+
+        # ── Drinking (hysteresis) — only when NOT actively foraging/hunting.
+        #    This prevents a critical bug where DRINKING overrides FORAGING:
+        #    when both hunger > enter AND hydration < enter, the old code emitted
+        #    two StateTransition effects and the last one (DRINKING) won. The animal
+        #    would cycle: forage briefly → drink (hunger builds unchecked) →
+        #    forage hungrier → drink sooner → ... → starvation death despite food.
+        #    By gating entry on "not already FORAGING/HUNTING", animals finish their
+        #    current feeding bout before switching to drink.
+        #
+        #    Emergency override: if hydration drops below DEHYDRATION_HYDRATION
+        #    (the threshold where health starts draining), the animal abandons
+        #    foraging/hunting/resting and seeks water immediately. This prevents
+        #    death spirals during ecosystem collapse when plants go dormant/dead
+        #    and herbivores would otherwise wander forever without drinking.
         elif ctx.entity["state"] == "DRINKING":
             if sv.get("hydration", 1.0) >= p.hydration_exit:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                 ))
-        elif sv.get("hydration", 1.0) < p.hydration_enter:
+        elif sv.get("hydration", 1.0) < DEHYDRATION_HYDRATION:
+            # Critical dehydration — override any active behavior to drink
+            effects.append(StateTransition(
+                entity_id=ctx.entity["id"], new_state="DRINKING", tick=ctx.tick,
+            ))
+        elif (sv.get("hydration", 1.0) < p.hydration_enter
+              and ctx.entity["state"] not in ("FORAGING", "HUNTING")):
             effects.append(StateTransition(
                 entity_id=ctx.entity["id"], new_state="DRINKING", tick=ctx.tick,
             ))
 
-        # ── Resting (hysteresis) ──
+        # ── Resting (hysteresis) — same gate: don't interrupt active behaviors.
         elif ctx.entity["state"] == "RESTING":
             if sv["energy"] >= p.energy_exit:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                 ))
-        elif sv["energy"] < p.energy_enter:
+        elif (sv["energy"] < p.energy_enter
+              and ctx.entity["state"] not in ("FORAGING", "HUNTING")):
             effects.append(StateTransition(
                 entity_id=ctx.entity["id"], new_state="RESTING", tick=ctx.tick,
             ))
@@ -164,13 +264,37 @@ class ConsumerGuardActor:
         # ── Foraging / Hunting (hysteresis) ──
         elif ctx.entity["state"] in ("FORAGING", "HUNTING"):
             if sv["hunger"] < p.hunger_exit:
-                effects.append(StateTransition(
-                    entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
-                ))
+                # Pollinators transition to WANDERING instead of IDLE when satiated.
+                # This keeps them moving and searching for flowers rather than
+                # sitting still, which prevents FORAGING↔IDLE chattering after
+                # each pollination visit (relief drops hunger below exit threshold).
+                if p.floral_affinity:
+                    effects.append(StateTransition(
+                        entity_id=ctx.entity["id"], new_state="WANDERING", tick=ctx.tick,
+                    ))
+                else:
+                    effects.append(StateTransition(
+                        entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
+                    ))
             elif p.diet_type in ("carnivore", "insectivore") and sv["hunger"] > CARNIVORE_HUNT_HUNGER:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="HUNTING", tick=ctx.tick,
                 ))
+
+        # ── Pollinator visit limit (state-independent check) ──
+        # This must be outside the FORAGING/HUNTING block because pollinators
+        # can pollinate while in IDLE state. If a butterfly has visited too many
+        # flowers consecutively, force WANDERING regardless of current state.
+        elif (p.floral_affinity
+              and ctx.entity["state"] not in ("WANDERING", "DYING", "REPRODUCING")
+              and ctx.entity.get("_pollination_visits", 0) >= POLLINATOR_VISIT_LIMIT):
+            effects.append(StateTransition(
+                entity_id=ctx.entity["id"], new_state="WANDERING", tick=ctx.tick,
+            ))
+            effects.append(SetEntityAttr(
+                entity_id=ctx.entity["id"], attr_name="_wander_cooldown",
+                value=float(POLLINATOR_WANDER_COOLDOWN), tick=ctx.tick,
+            ))
         elif sv["hunger"] >= p.hunger_enter:
             if p.diet_type in ("carnivore", "insectivore") and sv["hunger"] > CARNIVORE_HUNT_HUNGER:
                 effects.append(StateTransition(
@@ -183,7 +307,7 @@ class ConsumerGuardActor:
 
         # ── Default ──
         else:
-            if ctx.entity["state"] not in ("FORAGING", "HUNTING", "FLEEING", "DRINKING",
+            if ctx.entity["state"] not in ("FORAGING", "HUNTING", "WANDERING", "FLEEING", "DRINKING",
                                            "RESTING", "REPRODUCING", "SWARMING"):
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
@@ -289,6 +413,11 @@ class ConsumerGuardActor:
                     metadata=dict(meta),
                     state_vars=offspring_sv,
                     skeleton_id=ctx.entity.get("skeleton_id"),
+                    initial_attrs={
+                        # Newborn pollinators start with a cooldown so they don't
+                        # immediately re-pollinate the flower their parent was at.
+                        "_pollination_cooldown": float(POLLINATOR_POST_VISIT_COOLDOWN),
+                    },
                     tick=ctx.tick,
                 ),
                 EventRecord(

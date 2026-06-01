@@ -164,20 +164,22 @@ from ..effects import Effect  # noqa: E402
 
 
 class InteractionActorRegistry:
-    """Maps entity IDs to their interaction actor instances.
+    """Maps species IDs to lists of interaction actor instances.
 
     The engine populates this at init time based on each entity's
     functional role and interaction capabilities (diet type, floral affinity).
+    A single species can have multiple actors (e.g. FleeActor + HerbivoryActor),
+    so we store a list per species_id.
     """
 
     def __init__(self) -> None:
-        self._actors: dict[str, InteractionActor] = {}
+        self._actors: dict[str, list[InteractionActor]] = {}
 
     def register(self, entity_id: str, actor: InteractionActor) -> None:
-        self._actors[entity_id] = actor
+        self._actors.setdefault(entity_id, []).append(actor)
 
-    def get(self, entity_id: str) -> InteractionActor | None:
-        return self._actors.get(entity_id)
+    def get(self, entity_id: str) -> list[InteractionActor]:
+        return self._actors.get(entity_id, [])
 
     def clear(self) -> None:
         self._actors.clear()
