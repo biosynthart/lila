@@ -57,7 +57,6 @@ See Also
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from .actors import (
@@ -70,8 +69,6 @@ from .actors import (
 )
 from .biome import BiomeConfig, get_biome_config
 from .constants import (
-    ACTIVE_MOVEMENT_STATES,
-    ARRIVAL_THRESHOLD,
     DECOMP_NUTRIENT_EFFICIENCY,
     OM_DEPOSIT_MAX,
     OM_DEPOSIT_MIN,
@@ -97,6 +94,7 @@ from .constants import (
 from .effects import EffectBus
 from .entities import init_entity, is_alive
 from .layout import LayoutManager
+from .movement_system import MovementSystem
 from .spatial_index import SpatialQuery
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import CompiledEcology, compile_world
@@ -178,6 +176,9 @@ class EcosystemEngine:
         # ── Seed water source moisture footprints (after randomization) ──
         for source in self.water_sources:
             self._init_water_source_moisture(source)
+
+        # ── Movement system (gate + kinematics for mobile entities) ──
+        self._movement = MovementSystem(self._grid_max)
 
         # ── Rate multipliers (from world JSON, all default 1.0) ──
         rates = world_config.get("rates", {})
@@ -292,33 +293,8 @@ class EcosystemEngine:
             if not is_alive(entity):
                 continue
             params = self._get_params(entity)
-            if params is None or params.diet_type in ("autotroph", "decomposer"):
-                continue
-
-            # Decrement linger counter (set by pollination visits, etc.)
-            linger = entity.get("_linger", 0)
-            if linger > 0:
-                entity["_linger"] = max(0, linger - 1)
-                entity["velocity"] = [0.0, 0.0, 0.0]
-                continue
-
-            # Decrement post-visit cooldown (prevents immediate re-pollination
-            # after lingering ends — forces butterfly to actually fly away before
-            # it can visit another flower).
-            poll_cooldown = entity.get("_pollination_cooldown", 0)
-            if poll_cooldown > 0:
-                entity["_pollination_cooldown"] = max(0, poll_cooldown - 1)
-
-            # Pollinators move even when IDLE/WANDERING.
-            # IDLE: actively seek and discover flowers across the field.
-            # WANDERING: wander randomly (no flower-seeking) to disperse
-            # after pollination bouts, exploring new areas.
-            can_move = (
-                entity["state"] in ACTIVE_MOVEMENT_STATES
-                or (params.floral_affinity and entity["state"] in ("IDLE", "WANDERING"))
-            )
-            if params.speed > 0 and can_move:
-                self._move_toward_target(entity, params, dt)
+            if params and params.diet_type not in ("autotroph", "decomposer"):
+                self._movement.step(entity, params, dt)
 
         # Phase 2: Interactions — entity↔entity events (actor-based)
         interaction_effects = []
@@ -512,41 +488,7 @@ class EcosystemEngine:
             _get_params=self._get_params,  # for querying other entities' traits
         )
 
-    def _move_toward_target(self, e: dict, p: DerivedParams, dt: float) -> None:
-        """Move entity toward its current target at species-derived speed.
 
-        Target selection is now handled by MovementActor (actor-based),
-        which emits SetTarget/ClearTarget effects during the flow phase.
-        This method only performs the physical movement step.
-
-        When no target is set, the entity stops. The next tick's flow
-        phase will have MovementActor select a new target via effects.
-        On arrival within ARRIVAL_THRESHOLD, the target is cleared and
-        the entity stops — MovementActor picks a new one on the next tick.
-        """
-        pos = e["position"]
-        target = e.get("_target")
-
-        if target is None:
-            e["velocity"] = [0.0, 0.0, 0.0]
-            return
-
-        dx = target[0] - pos[0]
-        dz = target[2] - pos[2]
-        dist = math.sqrt(dx * dx + dz * dz)
-
-        if dist < ARRIVAL_THRESHOLD:
-            # Arrived — clear target. MovementActor will pick a new one
-            # on the next tick's flow phase.
-            e["_target"] = None
-            e["velocity"] = [0.0, 0.0, 0.0]
-            return
-
-        step = min(p.speed, dist)
-        nx, nz = dx / dist, dz / dist
-        pos[0] = max(0.0, min(self._grid_max, pos[0] + nx * step))
-        pos[2] = max(0.0, min(self._grid_max, pos[2] + nz * step))
-        e["velocity"] = [nx * p.speed / dt, 0.0, nz * p.speed / dt]
 
     # ═══════════════════════════════════════════════════════════════════════
     def _apply_voxel_effects(self, e: dict[str, Any], dt: float) -> None:
