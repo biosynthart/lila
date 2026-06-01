@@ -160,7 +160,7 @@ class GuardActor(InteractionActor):
 # Actor Registry — Maps entity IDs to their responsible actor instances
 # ═══════════════════════════════════════════════════════════════════════════════
 
-from ..effects import Effect  # noqa: E402
+from ..effects import Effect as Effect  # noqa: E402
 
 
 class InteractionActorRegistry:
@@ -368,13 +368,6 @@ def build_guard_registry(compiled: Any) -> GuardActorRegistry:
 
 
 # Import interaction actors here to avoid circular imports
-from .interaction_actors import (  # noqa: E402, F401
-    FleeActor,
-    HerbivoryActor,
-    PollinationActor,
-    PredationActor,
-)
-
 # Import flow and guard actors for registry builders
 from .flow_actors import (  # noqa: E402, F401
     ConsumerFlowActor,
@@ -385,4 +378,10 @@ from .guard_actors import (  # noqa: E402, F401
     ConsumerGuardActor,
     DecomposerGuardActor,
     ProducerGuardActor,
+)
+from .interaction_actors import (  # noqa: E402, F401
+    FleeActor,
+    HerbivoryActor,
+    PollinationActor,
+    PredationActor,
 )

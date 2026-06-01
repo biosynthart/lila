@@ -63,9 +63,7 @@ import random
 from typing import Any
 
 from .actors import (
-    FlowActor,
     FlowContext,
-    GuardActor,
     GuardContext,
     InteractionContext,
     build_flow_registry,
@@ -76,39 +74,15 @@ from .biome import BiomeConfig, get_biome_config
 from .constants import (
     ACTIVE_MOVEMENT_STATES,
     ARRIVAL_THRESHOLD,
-    CARNIVORE_HUNT_HUNGER,
-    CHILD_COLONY_FLOOR,
-    CHILD_COLONY_INHERIT,
-    CHILD_ENERGY_FLOOR,
-    CHILD_ENERGY_INHERIT,
-    CHILD_HEALTH_FLOOR,
-    CHILD_HEALTH_INHERIT,
-    CHILD_HUNGER_INHERIT,
-    COLLAPSE_HEALTH_MULTIPLIER,
-    COLLAPSE_HYDRATION_MULTIPLIER,
-    COLLAPSE_SUPPORT_THRESHOLD,
     DECOMP_NUTRIENT_EFFICIENCY,
     DEHYDRATION_HYDRATION,
-    DRINK_RECOVERY_RATE,
-    DRINK_SOIL_DRAIN,
-    DRINK_WATER_DRAIN,
-    FLEE_ESCAPE_DISTANCE,
-    HERBIVORY_CONSUME_DISTANCE,
-    HERBIVORY_MIN_HUNGER,
     OM_DEPOSIT_MAX,
     OM_DEPOSIT_MIN,
     OM_DEPOSIT_SCALE,
-    PLANT_BASE_GROWTH_RATE,
     PLANT_BASE_WATER_DEMAND,
     PLANT_DEFAULT_NUTRIENT_DEMAND,
-    PLANT_HEALTH_CRITICAL_HYDRATION,
-    PLANT_HEALTH_CRITICAL_NUTRIENTS,
-    PLANT_SOIL_UPTAKE_RATE,
-    POLLINATION_HEALTH_BOOST,
-    POLLINATOR_CRITICAL_HUNGER,
     POLLINATOR_CROWD_RADIUS,
     POLLINATOR_MAX_PER_FLOWER,
-    PREDATION_CATCH_DISTANCE,
     RAIN_ANIMAL_HYDRATION,
     RAIN_MOISTURE_BOOST,
     RAIN_NUTRIENT_BOOST,
@@ -121,29 +95,19 @@ from .constants import (
     SOIL_EVAP_HUMIDITY_FACTOR,
     SOIL_EVAP_TEMP_SCALE,
     SOIL_MOISTURE_FLOOR,
-    SPAWN_OFFSET,
-    SPREAD_DENSITY_RADIUS,
-    SPREAD_MIN_GROWTH,
-    SPREAD_MIN_HEALTH,
-    SPREAD_MIN_HYDRATION,
-    SPREAD_PARENT_GROWTH_COST,
-    SPREAD_PARENT_NUTRIENT_COST,
-    SPREAD_SOIL_MIN_MOISTURE,
-    SPREAD_SOIL_MIN_NUTRIENTS,
+    WANDER_RANGE,
     WATER_DRY_THRESHOLD,
     WATER_EVAPORATION_RATE,
     WATER_REFILL_RATE,
     WATER_REPLENISH_RATE,
     WATER_SOURCE_MOISTURE_TARGET,
-    WANDER_RANGE,
 )
 from .effects import EffectBus
-from .entities import init_entity, is_alive, is_mobile
+from .entities import init_entity, is_alive
 from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
 from .voxel_manager import VoxelManager
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Engine

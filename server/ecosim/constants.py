@@ -12,7 +12,6 @@ Species-specific parameters come from DerivedParams via the trait compiler.
 
 from __future__ import annotations
 
-
 # ── Drinking & hydration ──────────────────────────────────────────────────────
 DRINK_RECOVERY_RATE = 0.15      # hydration gained per tick × local soil moisture
 DRINK_SOIL_DRAIN = 0.01         # soil moisture removed per drink tick

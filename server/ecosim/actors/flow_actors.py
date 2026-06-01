@@ -17,19 +17,20 @@ from __future__ import annotations
 import math
 from typing import Any
 
-from ..biome import BiomeConfig
 from ..constants import (
     ACTIVE_ENERGY_DRAIN_STATES,
     COLLAPSE_HEALTH_MULTIPLIER,
     COLLAPSE_HYDRATION_MULTIPLIER,
     COLLAPSE_SUPPORT_THRESHOLD,
+    COLONY_STRESS_ENERGY,
+    COLONY_STRESS_HUNGER,
+    DEHYDRATION_HYDRATION,
     DRINK_RECOVERY_RATE,
     DRINK_SOIL_DRAIN,
     DRINK_WATER_DRAIN,
     ENERGY_RECOVERY_STATES,
     PLANT_BASE_GROWTH_RATE,
     PLANT_BASE_WATER_DEMAND,
-    PLANT_DEFAULT_NUTRIENT_DEMAND,
     PLANT_HEALTH_CRITICAL_HYDRATION,
     PLANT_HEALTH_CRITICAL_NUTRIENTS,
     PLANT_SOIL_UPTAKE_RATE,
@@ -47,21 +48,13 @@ from ..constants import (
     SPREAD_SOIL_MIN_MOISTURE,
     SPREAD_SOIL_MIN_NUTRIENTS,
     STARVATION_HUNGER,
-    DEHYDRATION_HYDRATION,
-    COLONY_STRESS_ENERGY,
-    COLONY_STRESS_HUNGER,
     WATER_DRY_THRESHOLD,
     WATER_PROXIMITY_COLONY_FACTOR,
     WATER_PROXIMITY_HUNGER_FACTOR,
 )
 from ..effects import (
-    ClearTarget,
-    EffectType,
-    EventRecord,
-    LingerEffect,
     SetStateVar,
     SpawnEntity,
-    StateTransition,
     StateVarDelta,
     VoxelDelta,
 )

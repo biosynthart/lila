@@ -28,9 +28,6 @@ from ..constants import (
     CHILD_HUNGER_INHERIT,
     DEHYDRATION_HYDRATION,
     DORMANCY_RECOVERY_EXIT_HEALTH,
-    OM_DEPOSIT_MAX,
-    OM_DEPOSIT_MIN,
-    OM_DEPOSIT_SCALE,
     POLLINATOR_POST_VISIT_COOLDOWN,
     POLLINATOR_VISIT_LIMIT,
     POLLINATOR_WANDER_COOLDOWN,
@@ -47,7 +44,6 @@ from ..effects import (
     StateVarDelta,
 )
 from ..entities import is_alive
-from ..traits import DerivedParams
 
 
 class ConsumerGuardActor:
@@ -83,7 +79,7 @@ class ConsumerGuardActor:
             return []
 
         sv = ctx.entity["state_vars"]
-        old_state = ctx.entity["state"]
+        ctx.entity["state"]
         meta = ctx.entity["metadata"]
         effects: list[Any] = []
 
@@ -464,7 +460,7 @@ class ProducerGuardActor:
             return []
 
         sv = ctx.entity["state_vars"]
-        old_state = ctx.entity["state"]
+        ctx.entity["state"]
         effects: list[Any] = []
 
         # ── Death (health ≤ 0) ──

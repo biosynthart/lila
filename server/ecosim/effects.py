@@ -19,17 +19,15 @@ See Also:
 
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass, field
-from enum import Enum
+from enum import StrEnum
 from typing import Any
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Effect Types
 # ═══════════════════════════════════════════════════════════════════════════════
 
-class EffectType(str, Enum):
+class EffectType(StrEnum):
     """All effect types the simulation can produce."""
     # State variable changes
     STATE_VAR_DELTA = "state_var_delta"       # Increment/decrement a state var
