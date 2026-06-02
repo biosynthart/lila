@@ -41,14 +41,6 @@ from ..constants import (
     REPRO_BUILD_MIN_HEALTH,
     REPRO_DECAY_ENERGY,
     REPRO_DECAY_HUNGER,
-    SPREAD_DENSITY_RADIUS,
-    SPREAD_MIN_GROWTH,
-    SPREAD_MIN_HEALTH,
-    SPREAD_MIN_HYDRATION,
-    SPREAD_PARENT_GROWTH_COST,
-    SPREAD_PARENT_NUTRIENT_COST,
-    SPREAD_SOIL_MIN_MOISTURE,
-    SPREAD_SOIL_MIN_NUTRIENTS,
     STARVATION_HUNGER,
     WATER_DRY_THRESHOLD,
     WATER_PROXIMITY_COLONY_FACTOR,
@@ -56,7 +48,6 @@ from ..constants import (
 )
 from ..effects import (
     SetStateVar,
-    SpawnEntity,
     StateVarDelta,
     VoxelDelta,
 )
@@ -436,9 +427,9 @@ class ProducerFlowActor:
             delta=dt, tick=ctx.tick,
         ))
 
-        # ── Vegetative spreading ──
+        # ── Vegetative spreading (delegated to ReproductionActor) ──
         if p.spread_mode is not None:
-            spread_effects = self._try_spread(ctx, sv, p, dt)
+            spread_effects = ReproductionActor().resolve_plant(ctx, sv, p, dt)
             effects.extend(spread_effects)
 
         return effects
@@ -475,116 +466,6 @@ class ProducerFlowActor:
                 continue
             count += 1
         return count
-
-    def _try_spread(self, ctx: Any, sv: dict[str, Any], p: DerivedParams, dt: float) -> list[Any]:
-        """Vegetative spreading — returns effects for new offspring.
-
-        Matches engine inline behavior:
-        - Parent must meet health/hydration/growth thresholds
-        - Random chance gate using spread_chance × rate_reproduction
-        - Density check: no other autotroph within SPREAD_DENSITY_RADIUS
-        - Soil quality check at target position
-        - Fixed parent cost (growth -0.1, nutrients -0.05)
-        """
-        import random as _random
-
-        # Threshold checks — must meet all three
-        if (sv.get("health", 1.0) < SPREAD_MIN_HEALTH
-                or sv.get("hydration", 1.0) < SPREAD_MIN_HYDRATION
-                or sv.get("growth", 0.1) < SPREAD_MIN_GROWTH):
-            return []
-
-        # Cooldown check
-        cooldown = ctx.entity.get("_spread_cooldown", 0)
-        if cooldown > 0:
-            effects: list[Any] = [SetStateVar(
-                entity_id=ctx.entity["id"], var_name="_spread_cooldown",
-                value=float(cooldown - 1), tick=ctx.tick,
-            )]
-            return effects
-
-        # Random chance gate (uses spread_chance from DerivedParams)
-        rate_reproduction = ctx.rate_multipliers.get("reproduction", 1.0)
-        if _random.random() > p.spread_chance * rate_reproduction:
-            return []
-
-        spread_range = p.spread_range or 2.0
-        # Pick a random position within spread range
-        pos = ctx.entity["position"]
-        spread_pos = [
-            pos[0] + _random.uniform(-spread_range, spread_range),
-            0.0,
-            pos[2] + _random.uniform(-spread_range, spread_range),
-        ]
-
-        # Density check — no other autotroph within SPREAD_DENSITY_RADIUS
-        get_params = getattr(ctx, "_get_params", None)
-        for ent in ctx._entities.values():
-            if not is_alive(ent) or ent["state"] == "DORMANT":
-                continue
-            if ent["id"] == ctx.entity["id"]:
-                continue
-            # Check if autotroph via params or entity type
-            ep = get_params(ent) if get_params else None
-            is_autotroph = (
-                (ep is not None and getattr(ep, "diet_type", "") == "autotroph")
-                or ent.get("type") in ("PLANT", "TREE")
-            )
-            if not is_autotroph:
-                continue
-            dx = ent["position"][0] - spread_pos[0]
-            dz = ent["position"][2] - spread_pos[2]
-            dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= SPREAD_DENSITY_RADIUS:
-                # Set cooldown and abort
-                return [SetStateVar(
-                    entity_id=ctx.entity["id"], var_name="_spread_cooldown",
-                    value=float(p.spread_cooldown // 2), tick=ctx.tick,
-                )]
-
-        # Soil quality check at target position
-        gx, gy, gz = ctx.voxel_grid.world_to_grid(*spread_pos)
-        if (ctx.voxel_grid.get("moisture", gx, gy, gz) < SPREAD_SOIL_MIN_MOISTURE
-                or ctx.voxel_grid.get("nutrients", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
-            return []
-
-        # Offspring state vars (matches engine inline)
-        offspring_sv = {
-            "growth": 0.05,
-            "hydration": ctx.voxel_grid.get("moisture", gx, gy, gz) * 0.8,
-            "nutrient_store": 0.3,
-            "health": 0.8,
-            "age": 0.0,
-        }
-
-        effects = [
-            # Parent pays fixed cost to spread
-            StateVarDelta(
-                entity_id=ctx.entity["id"], var_name="growth",
-                delta=-SPREAD_PARENT_GROWTH_COST, tick=ctx.tick,
-            ),
-            StateVarDelta(
-                entity_id=ctx.entity["id"], var_name="nutrient_store",
-                delta=-SPREAD_PARENT_NUTRIENT_COST, tick=ctx.tick,
-            ),
-            # Set spread cooldown on parent
-            SetStateVar(
-                entity_id=ctx.entity["id"], var_name="_spread_cooldown",
-                value=float(p.spread_cooldown), tick=ctx.tick,
-            ),
-            # Spawn child plant
-            SpawnEntity(
-                entity_id=f"{ctx.entity['id']}_s{ctx.tick}",
-                type=ctx.entity["type"],
-                species=ctx.entity.get("species"),
-                position=spread_pos,
-                metadata=dict(ctx.entity["metadata"]),
-                state_vars=offspring_sv,
-                tick=ctx.tick,
-            ),
-        ]
-
-        return effects
 
 
 class DecomposerFlowActor:
@@ -644,3 +525,7 @@ class DecomposerFlowActor:
     def _ensure_decomposer_vars(sv: dict[str, Any]) -> None:
         sv.setdefault("activity", 0.5)
         sv.setdefault("population", 0.5)
+
+# Import reproduction actor here to avoid circular imports with __init__.py
+from .reproduction_actor import ReproductionActor  # noqa: E402, F401
+
