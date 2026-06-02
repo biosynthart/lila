@@ -14,24 +14,14 @@ See Also:
 
 from __future__ import annotations
 
-import math
 from typing import Any
 
 from ..constants import (
     CARNIVORE_HUNT_HUNGER,
-    CHILD_COLONY_FLOOR,
-    CHILD_COLONY_INHERIT,
-    CHILD_ENERGY_FLOOR,
-    CHILD_ENERGY_INHERIT,
-    CHILD_HEALTH_FLOOR,
-    CHILD_HEALTH_INHERIT,
-    CHILD_HUNGER_INHERIT,
     DEHYDRATION_HYDRATION,
     DORMANCY_RECOVERY_EXIT_HEALTH,
-    POLLINATOR_POST_VISIT_COOLDOWN,
     POLLINATOR_VISIT_LIMIT,
     POLLINATOR_WANDER_COOLDOWN,
-    SPAWN_OFFSET,
 )
 from ..effects import (
     DepositOrganicMatter,
@@ -39,7 +29,6 @@ from ..effects import (
     RemoveEntity,
     SetEntityAttr,
     SetStateVar,
-    SpawnEntity,
     StateTransition,
     StateVarDelta,
 )
@@ -310,125 +299,7 @@ class ConsumerGuardActor:
                 ))
 
         # ── Reproduction (checked independently, can interrupt any state) ──
-        if self._should_reproduce(ctx):
-            effects.extend(self._reproduction_effects(ctx))
-
-        return effects
-
-    def _should_reproduce(self, ctx: Any) -> bool:
-        """Check if entity should reproduce this tick."""
-        sv = ctx.entity["state_vars"]
-        p = ctx.params
-        if sv.get("reproductive_drive", 0) <= p.repro_drive_threshold:
-            return False
-        if ctx.entity["state"] in ("DYING", "REPRODUCING", "SWARMING"):
-            return False
-
-        # Mate search — iterate over all entities for proximity check
-        for other in ctx._entities.values():
-            if not is_alive(other):
-                continue
-            if other.get("species") != ctx.entity.get("species"):
-                continue
-            dx = other["position"][0] - ctx.entity["position"][0]
-            dz = other["position"][2] - ctx.entity["position"][2]
-            dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= p.sensory_range:
-                return True
-        return False
-
-    def _reproduction_effects(self, ctx: Any) -> list[Any]:
-        """Generate reproduction effects (offspring spawn + event).
-
-        Matches engine inline behavior:
-        - Parent pays energy cost from DerivedParams
-        - Colony health cost for insect-type entities
-        - Clutch size from DerivedParams (can be > 1)
-        - Child inheritance with proper floors (generational decline)
-        """
-        import random as _random
-
-        p = ctx.params
-        sv = ctx.entity["state_vars"]
-        meta = ctx.entity["metadata"]
-        pos = ctx.entity["position"]
-        effects: list[Any] = []
-
-        # ── Parent reproduction cost ──
-        # Reset reproductive drive and pay energy cost
-        effects.append(StateVarDelta(
-            entity_id=ctx.entity["id"], var_name="reproductive_drive",
-            delta=-sv.get("reproductive_drive", 0.0), tick=ctx.tick,
-        ))
-        effects.append(StateVarDelta(
-            entity_id=ctx.entity["id"], var_name="energy",
-            delta=-p.parent_energy_cost, tick=ctx.tick,
-        ))
-
-        # Colony health cost for insect-type entities (check type, not diet_type)
-        if "colony_health" in sv and ctx.entity.get("type") == "INSECT":
-            colony_cost = p.parent_energy_cost * 0.3
-            effects.append(StateVarDelta(
-                entity_id=ctx.entity["id"], var_name="colony_health",
-                delta=-colony_cost, tick=ctx.tick,
-            ))
-
-        # ── Spawn offspring (clutch_size from DerivedParams) ──
-        clutch_size = p.clutch_size if p.clutch_size > 0 else 1
-        for i in range(clutch_size):
-            # Offspring position — near parent with small offset
-            new_x = pos[0] + _random.uniform(-SPAWN_OFFSET, SPAWN_OFFSET)
-            new_z = pos[2] + _random.uniform(-SPAWN_OFFSET, SPAWN_OFFSET)
-
-            # Child inherits parent stress (generational decline) with floors
-            offspring_sv: dict[str, float] = {
-                "hunger": sv.get("hunger", 0.5) * CHILD_HUNGER_INHERIT,
-                "energy": max(CHILD_ENERGY_FLOOR, sv.get("energy", 1.0) * CHILD_ENERGY_INHERIT),
-                "hydration": sv.get("hydration", 1.0),
-                "health": max(CHILD_HEALTH_FLOOR, sv.get("health", 1.0) * CHILD_HEALTH_INHERIT),
-                "reproductive_drive": 0.0,
-                "age": 0.0,
-            }
-
-            if "colony_health" in sv:
-                offspring_sv["colony_health"] = max(
-                    CHILD_COLONY_FLOOR, sv["colony_health"] * CHILD_COLONY_INHERIT)
-
-            # Insect-specific state vars
-            if ctx.entity.get("type") == "INSECT":
-                offspring_sv.setdefault("activity", 1.0)
-                offspring_sv.setdefault("population", 1.0)
-
-            child_id = f"{ctx.entity['id']}_child_{ctx.tick}_{_random.randint(0, 999)}"
-            effects.extend([
-                SpawnEntity(
-                    entity_id=child_id,
-                    type=ctx.entity["type"],
-                    species=ctx.entity.get("species"),
-                    position=[new_x, pos[1], new_z],
-                    metadata=dict(meta),
-                    state_vars=offspring_sv,
-                    skeleton_id=ctx.entity.get("skeleton_id"),
-                    initial_attrs={
-                        # Newborn pollinators start with a cooldown so they don't
-                        # immediately re-pollinate the flower their parent was at.
-                        "_pollination_cooldown": float(POLLINATOR_POST_VISIT_COOLDOWN),
-                    },
-                    tick=ctx.tick,
-                ),
-                EventRecord(
-                    event_type="REPRODUCTION",
-                    source_id=ctx.entity["id"],
-                    target_id=child_id,
-                    position=[new_x, pos[1], new_z],
-                    tick=ctx.tick,
-                ),
-            ])
-
-        # State transition to REPRODUCING (applied after spawns so parent stays alive)
-        effects.append(StateTransition(
-            entity_id=ctx.entity["id"], new_state="REPRODUCING", tick=ctx.tick,
-        ))
+        effects.extend(ReproductionActor().resolve_animal(ctx))
 
         return effects
 
@@ -622,3 +493,7 @@ class DecomposerGuardActor:
                 ))
 
         return effects
+
+# Import reproduction actor here to avoid circular imports with __init__.py
+from .reproduction_actor import ReproductionActor  # noqa: E402, F401
+
