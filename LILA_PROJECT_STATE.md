@@ -97,11 +97,15 @@ lila/
 │   │   ├── trait_compiler.py       # [M2] TraitCompiler: traits → engine params
 │   │   ├── constants.py            # [M3] Universal simulation constants (single source of truth)
 │   │   ├── effects.py              # [M3] Effect dataclasses + EffectBus
-│   │   ├── actors/                 # [M3] Actor system
+│   │   ├── actors/                 # [M3] Actor system (flow, guard, interaction, movement)
 │   │   │   ├── __init__.py        # InteractionContext, FlowActor/GuardActor bases, registries
-│   │   │   ├── flow_actors.py     # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+│   │   │   ├── flow_actors.py     # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor (+ MovementActor integration)
 │   │   │   ├── guard_actors.py    # ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
-│   │   │   └── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
+│   │   │   ├── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
+│   │   │   └── movement_actors.py  # MovementActor — target selection as effect-emitting actor (492 lines)
+│   │   ├── layout.py             # [M3] LayoutManager — world loading + randomization pipeline (306 lines)
+│   │   ├── spatial_index.py      # [M3] SpatialIndex protocol + BruteForceSpatialIndex (169 lines)
+│   │   ├── movement_system.py    # [M3] MovementSystem — gate policy + kinematics (138 lines)
 │   │   └── adapters/
 │   │       ├── __init__.py         # create_adapter() factory
 │   │       ├── mlp.py              # reference MLP (~500 params, pure Python)
@@ -114,7 +118,8 @@ lila/
 │   │   ├── smoke_test.py           # 50-tick integration test
 │   │   ├── test_actors.py          # [M3] EffectBus + effect priority tests (18)
 │   │   ├── test_ecosim.py          # unit tests (12 tests)
-│   │   └── test_traits.py          # [M2] allometric derivation tests (54)
+│   │   ├── test_traits.py          # [M2] allometric derivation tests (54)
+│   │   └── test_movement_actor.py  # [M3] movement actor behavior tests (36)
 │   └── weights/
 │       └── (motion_v0.json)        # placeholder for trained weights
 │
@@ -280,7 +285,7 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 - **Docker Compose** — single command: `docker compose up --build`
 - **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
-- **GitHub CI** — pytest (94 tests) + ruff lint, Python 3.11/3.12
+- **GitHub CI** — pytest (106 tests) + ruff lint, Python 3.11/3.12
 - **uv workflow** — `uv sync` for local dev, deterministic lockfile
 - **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
 
@@ -457,8 +462,7 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Deliverable:** `examples/species_definitions.json` — 8 species trait vectors. `demo_world.json` updated with `species_definitions` key.
 
 ### Test Suite ✅
-- **94 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54)
-- Trait derivation tests: metabolic rate, speed, sensory range, flow rates, guard thresholds
+- **94 → 106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
 - Interaction template tests: herbivory matching/preference, predation with mass ratios, pollination with linger/cooldown, decomposition mineralization boost
 - Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
 - Backward compatibility: legacy world returns LegacyParams, trait world returns CompiledEcology
@@ -563,7 +567,7 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 **Deliverable:** `ecosim/engine.py` — 514 lines added in commit ec021eb
 
 ### Test Suite ✅
-- **94 tests passing** across `test_ecosim.py` (12) + `test_traits.py` (54) + actor/effect tests
+- **106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
 - Smoke test shows state variables evolving correctly for both trait and legacy worlds
 - Bee colony transitions to FORAGING, events fire, entities move toward targets
 
@@ -572,7 +576,7 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 - `ecosim/effects.py` — Effect dataclasses + EffectBus (547 lines after Phase 2 additions)
 - `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, FlowActor/GuardActor subtypes, registries, builders (387 lines)
 - `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (554 lines)
-- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback (1338 lines)
+- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback, decomposed into focused modules (744 lines after extraction)
 
 ### Milestone 3 Phase 2 Deliverables ✅
 **Shipped:**
@@ -583,6 +587,16 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 - Engine step(): flow/guard actors used for trait-based worlds; legacy inline functions retained as fallback
 
 **New files: 2. Modified files: 3. No new external dependencies.**
+
+### Engine Decomposition ✅
+The monolithic engine has been decomposed into focused modules:
+- **LayoutManager** (`layout.py`, 306 lines) — entity initialization, water source parsing, grid bounds calculation, full randomization pipeline (D4 transforms, jitter, extra spawns, push-from-water)
+- **SpatialIndex** (`spatial_index.py`, 169 lines) — strategy interface (SpatialIndex Protocol + BruteForceSpatialIndex) for neighbor queries; pluggable for future spatial hash swap
+- **MovementSystem** (`movement_system.py`, 138 lines) — movement gate policy and kinematics. Public API: `step(entity, params, dt)`
+- **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection as pure-function actor emitting SetTarget/ClearTarget effects
+- **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine
+
+**Result:** `engine.py` reduced from ~1338 → 744 lines. Test suite: 94 → 106 tests.
 
 ---
 
@@ -616,8 +630,18 @@ The pollination actor now enforces realistic dispersal behavior:
 - All actor files import constants from the shared module instead of defining local copies
 - Ruff linting resolved: StrEnum migration, unused imports removed, import sort order fixed
 
+### Engine Decomposition ✅
+The monolithic engine has been decomposed into focused modules:
+- **LayoutManager** (`layout.py`, 306 lines) — entity initialization, water source parsing, grid bounds calculation, full randomization pipeline (D4 transforms, jitter, extra spawns, push-from-water). Extracted ~130 lines from engine.
+- **SpatialIndex** (`spatial_index.py`, 169 lines) — strategy interface (SpatialIndex Protocol + BruteForceSpatialIndex) for neighbor queries. Pluggable for future spatial hash swap. Includes canonical `distance_2d()` helper. Extracted ~40 lines from engine.
+- **MovementSystem** (`movement_system.py`, 138 lines) — movement gate policy (linger/cooldown decrements, ACTIVE_MOVEMENT_STATES check, pollinator exception) and kinematics (_move_toward_target). Public API: `step(entity, params, dt)`. Extracted ~59 lines from engine.
+- **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects. Priority chain: swarming → drinking → mate-seeking → foraging → hunting → idle pollinator → wander. Integrated into ConsumerFlowActor.resolve().
+- **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine (_pick_movement_target, _find_nearest_food_by_preference, _find_nearest_prey, etc.) superseded by MovementActor.
+
+**Result:** `engine.py` reduced from ~2465 → 744 lines. All 106 tests pass.
+
 ### Test Suite ✅
-- **94 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54)
+- **106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
 - New pollinator dispersal tests: per-flower cap, visit limit enforcement, wander cooldown, post-visit cooldown
 - SetEntityAttr effect application tests
 

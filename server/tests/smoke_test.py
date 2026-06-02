@@ -19,8 +19,8 @@ tropical forest and print key observations.
 
 import json
 
-from ecosim.engine import EcosystemEngine
 from ecosim.adapters import create_adapter
+from ecosim.engine import EcosystemEngine
 
 WORLD = {
     "version": "0.1",
@@ -312,12 +312,12 @@ def main():
         print(f"  {t}: {count}")
 
     if removals_seen:
-        print(f"\nEntities removed:")
+        print("\nEntities removed:")
         for tick, rid in removals_seen:
             print(f"  tick {tick}: {rid}")
 
     if spawns_seen:
-        print(f"\nEntities spawned:")
+        print("\nEntities spawned:")
         for tick, sid, stype in spawns_seen:
             print(f"  tick {tick}: {sid} ({stype})")
 

@@ -387,9 +387,10 @@ class EffectBus:
         entities: dict[str, dict],
         voxels: Any,
     ) -> None:
-        """Apply flow-only effects (state vars + voxel changes).
+        """Apply flow-only effects (state vars + voxel changes + movement targets).
 
-        Flow actors only produce StateVarDelta, SetStateVar, and VoxelDelta.
+        Flow actors produce StateVarDelta, SetStateVar, VoxelDelta,
+        and SetTarget/ClearTarget (from MovementActor during consumer flow).
         No entity lifecycle changes — those are handled by guard actors.
 
         Args:
@@ -397,7 +398,8 @@ class EffectBus:
             entities: Entity registry (mutated in place for state vars).
             voxels: Voxel grid manager (mutated in place for voxel deltas).
         """
-        # Sort by priority — SetStateVar before StateVarDelta
+        # Sort by priority — SetStateVar before StateVarDelta,
+        # ClearTarget before SetTarget
         sorted_effects = sorted(
             effects, key=lambda e: EFFECT_PRIORITY.get(e.effect_type, 9)
         )
@@ -418,6 +420,16 @@ class EffectBus:
 
             elif isinstance(effect, VoxelDelta):
                 voxels.add(effect.layer, effect.x, effect.y, effect.z, effect.delta)
+
+            elif isinstance(effect, ClearTarget):
+                entity = entities.get(effect.entity_id)
+                if entity is not None:
+                    entity["_target"] = None
+
+            elif isinstance(effect, SetTarget):
+                entity = entities.get(effect.entity_id)
+                if entity is not None:
+                    entity["_target"] = effect.position
 
     def apply_effects_with_om_deposit(
         self,

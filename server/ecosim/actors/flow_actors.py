@@ -15,6 +15,7 @@ See Also:
 from __future__ import annotations
 
 import math
+from dataclasses import replace
 from typing import Any
 
 from ..constants import (
@@ -60,6 +61,7 @@ from ..effects import (
 )
 from ..entities import is_alive
 from ..traits import DerivedParams
+from .movement_actors import MovementActor
 
 
 class ConsumerFlowActor:
@@ -206,6 +208,13 @@ class ConsumerFlowActor:
                     delta=-drain, tick=ctx.tick,
                 ))
 
+        # ── Movement target selection (actor-based) ──
+        # Build nearby entities from full entity set for spatial queries.
+        # Pollinators sense across the entire grid; others use sensory_range.
+        movement_ctx = self._build_movement_context(ctx, p)
+        if movement_ctx is not None:
+            effects.extend(MovementActor().resolve(movement_ctx))
+
         return effects
 
     @staticmethod
@@ -244,6 +253,57 @@ class ConsumerFlowActor:
                 best_dist, best = d, source
         if best is not None:
             best["water_level"] = max(0.0, best["water_level"] - amount)
+
+    def _build_movement_context(self, ctx: Any, p: DerivedParams) -> Any | None:
+        """Build a context with nearby entities for MovementActor.
+
+        Pollinators sense chemical gradients across the entire meadow,
+        so they get all living entities. Other consumers use their
+        sensory_range for spatial queries.
+
+        Returns a FlowContext with nearby_entities populated, or None
+        if no entity set is available (ctx._entities missing).
+        """
+        all_entities = getattr(ctx, "_entities", None)
+        if not all_entities:
+            return None
+
+        pos = ctx.entity["position"]
+        entity_id = ctx.entity["id"]
+
+        # Pollinators sense across the entire grid; others use sensory_range.
+        if p.floral_affinity:
+            search_radius = 31.0  # grid_max default (matches engine _grid_max)
+        else:
+            search_radius = p.sensory_range
+
+        nearby = self._entities_in_range(pos, search_radius, entity_id, all_entities)
+
+        # Build new FlowContext with nearby entities injected
+        return replace(ctx, nearby_entities=nearby)
+
+    @staticmethod
+    def _entities_in_range(
+        pos: list[float], radius: float, exclude_id: str,
+        all_entities: dict[str, Any],
+    ) -> list[dict]:
+        """Find all living entities within radius of pos.
+
+        Brute-force spatial query over the full entity set. Used to build
+        nearby_entities for MovementActor target selection.
+        """
+        results = []
+        r2 = radius * radius
+        for other in all_entities.values():
+            if other["id"] == exclude_id:
+                continue
+            if not is_alive(other):
+                continue
+            dx = pos[0] - other["position"][0]
+            dz = pos[2] - other["position"][2]
+            if dx * dx + dz * dz <= r2:
+                results.append(other)
+        return results
 
 
 class ProducerFlowActor:

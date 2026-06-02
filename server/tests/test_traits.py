@@ -10,42 +10,35 @@
 #   3. TraitCompiler integration (full pipeline)
 
 import json
-import math
-import sys
 import os
+import sys
 
 # Add parent dir so we can import ecosim
 sys.path.insert(0, os.path.join(os.path.dirname(__file__), ".."))
 
-from ecosim.traits import (
-    TraitVector,
-    DerivedParams,
-    derive_metabolic_rate,
-    derive_speed,
-    derive_sensory_range,
-    derive_flow_rates,
-    derive_guard_thresholds,
-    derive_consumption_damage,
-    derive_all,
-    trait_vector_from_dict,
-    parse_species_definitions,
-    REFERENCE_METABOLIC_RATE,
-    FLOOR_HUNGER_RATE,
-)
 from ecosim.interactions import (
-    Herbivory,
-    Predation,
-    Pollination,
     Decomposition,
-    InteractionParams,
-    ALL_TEMPLATES,
+    Herbivory,
+    Pollination,
+    Predation,
 )
 from ecosim.trait_compiler import (
-    TraitCompiler,
     CompiledEcology,
+    TraitCompiler,
     compile_world,
 )
-
+from ecosim.traits import (
+    REFERENCE_METABOLIC_RATE,
+    TraitVector,
+    derive_all,
+    derive_flow_rates,
+    derive_guard_thresholds,
+    derive_metabolic_rate,
+    derive_sensory_range,
+    derive_speed,
+    parse_species_definitions,
+    trait_vector_from_dict,
+)
 
 # ─────────────────────────────────────────────────────────────────────────────
 # Test Fixtures — Trait vectors for all species
@@ -300,10 +293,10 @@ class TestSensoryRange:
     def test_wolf_enhanced_sensory(self):
         """Wolf has 1.5x sensory multiplier — larger range than mass alone."""
         wolf_sr = derive_sensory_range(make_wolf())
-        # Wolf at 40 kg with 1.5x vs deer at 80 kg with 1.0x
         deer_sr = derive_sensory_range(make_deer())
-        # Wolf has smaller mass but enhanced multiplier
-        assert wolf_sr > 0, f"Wolf sensory range should be > 0"
+        # Wolf at 40 kg with 1.5x multiplier vs deer at 80 kg with 1.0x
+        assert wolf_sr > 0, "Wolf sensory range should be > 0"
+        assert wolf_sr >= deer_sr * 0.7, "Wolf enhanced multiplier should compensate for smaller mass"
 
     def test_sessile_zero_sensory(self):
         """Sessile organisms have no active sensing."""
@@ -725,7 +718,7 @@ def print_calibration_report():
     # Interaction matrix
     species = [f() for f in ALL_8_SPECIES]
     compiled = TraitCompiler(species).compile()
-    print(f"\n── Interaction Matrix ──")
+    print("\n── Interaction Matrix ──")
     for (a, t), ixns in sorted(compiled.interaction_matrix.items()):
         for ix in ixns:
             extras = []
@@ -738,16 +731,16 @@ def print_calibration_report():
             extra_str = f" ({', '.join(extras)})" if extras else ""
             print(f"  {a:15s} → {t:15s} : {ix.interaction_type}{extra_str}")
 
-    print(f"\n── Flee Index ──")
+    print("\n── Flee Index ──")
     for prey, predators in sorted(compiled.flee_from.items()):
         print(f"  {prey} flees from: {predators}")
 
-    print(f"\n── Diet Preferences ──")
+    print("\n── Diet Preferences ──")
     for species_id, prefs in sorted(compiled.diet_preferences.items()):
         ordered = [f"{s} (pref={p})" for s, p in prefs]
         print(f"  {species_id}: {', '.join(ordered)}")
 
-    print(f"\n── Decomposers ──")
+    print("\n── Decomposers ──")
     for sid, params in compiled.decomposers.items():
         print(f"  {sid}: mineralization_boost={params.mineralization_boost:.3f}")
 
@@ -760,7 +753,6 @@ def print_calibration_report():
 
 if __name__ == "__main__":
     # Run tests manually (or use pytest)
-    import traceback
 
     test_classes = [
         TestMetabolicRate,
@@ -800,7 +792,7 @@ if __name__ == "__main__":
     print(f"Results: {passed}/{total} passed, {failed} failed")
 
     if errors:
-        print(f"\nFailures:")
+        print("\nFailures:")
         for cls_name, method, err in errors:
             print(f"  {cls_name}.{method}: {err}")
 

@@ -20,17 +20,13 @@ from ecosim.actors.interaction_actors import (
     PredationActor,
 )
 from ecosim.effects import (
-    ClearTarget,
     EffectType,
     EventRecord,
-    LingerEffect,
     RemoveEntity,
     SetEntityAttr,
     SetStateVar,
-    SetTarget,
     StateTransition,
     StateVarDelta,
-    VoxelDelta,
 )
 
 
@@ -390,7 +386,7 @@ class TestPollinationActor(unittest.TestCase):
         Enforces POLLINATOR_MAX_PER_FLOWER so butterflies disperse across the
         field instead of all clustering on one plant.
         """
-        from ecosim.constants import POLLINATOR_CROWD_RADIUS, POLLINATOR_MAX_PER_FLOWER
+        from ecosim.constants import POLLINATOR_MAX_PER_FLOWER
 
         p = MagicMock()
         p.species_id = "butterfly"
@@ -593,7 +589,6 @@ class TestConsumerGuardActor(unittest.TestCase):
 
     def _make_guard_context(self, **kwargs):
         """Build a mock GuardContext for testing."""
-        from ecosim.actors import GuardContext
         entity_id = kwargs.pop("entity_id", "test_deer")
         species = kwargs.pop("species", "deer")
         state = kwargs.pop("state", "IDLE")
