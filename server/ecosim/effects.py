@@ -252,7 +252,8 @@ class SoilDrain(Effect):
     entity_id: str
     position: list[float]
     layer: str  # "nutrients" or "moisture"
-    amount: float  # negative delta to apply
+    amount: float  # negative delta to apply (total across all cells)
+    radius: float | None = None  # footprint radius in world units (None = single cell)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -261,8 +262,9 @@ class SoilDeposit(Effect):
     effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
     entity_id: str
     position: list[float]
-    layer: str  # "organic_matter"
+    layer: str  # "organic_matter" or "nutrients"
     amount: float
+    radius: float | None = None  # footprint radius in world units (None = single cell)
 
 
 @dataclass(frozen=True, kw_only=True)

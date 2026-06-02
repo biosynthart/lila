@@ -61,15 +61,14 @@ class SoilEvaporationHandler(WorldProcessHandler):
 
         evap = evap_effect.evap_rate  # pre-computed by engine (includes dt)
 
-        dims = ctx.voxel_grid.dimensions
-        for x in range(dims[0]):
-            for z in range(dims[2]):
-                current = ctx.voxel_grid.get("moisture", x, 0, z)
-                if current > SOIL_MOISTURE_FLOOR:
-                    ctx.voxel_grid.set(
-                        "moisture", x, 0, z,
-                        max(SOIL_MOISTURE_FLOOR, current - evap),
-                    )
+        ctx.voxel_grid.walk_layer(
+            "moisture",
+            lambda x, y, z, val: (
+                ctx.voxel_grid.set("moisture", x, y, z,
+                                   max(SOIL_MOISTURE_FLOOR, val - evap))
+                if val > SOIL_MOISTURE_FLOOR
+                else None),
+        )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -97,30 +96,36 @@ class WaterReplenishHandler(WorldProcessHandler):
                 + replenish_effect.replenish_gain))
             source["radius"] = source["max_radius"] * source["water_level"]
 
-            # Update soil moisture in water footprint
+            # Update soil moisture in water footprint using query_overlap.
             cx, _, cz = source["position"]
-            max_r = source["max_radius"]
             eff_r = source["radius"]
-            for ix in range(int(cx - max_r), int(cx + max_r) + 1):
-                for iz in range(int(cz - max_r), int(cz + max_r) + 1):
-                    dist_sq = (ix - cx) ** 2 + (iz - cz) ** 2
-                    gx, gy, gz = ctx.voxel_grid.world_to_grid(
-                        float(ix), 0.0, float(iz))
-                    if dist_sq <= eff_r * eff_r:
-                        target = WATER_SOURCE_MOISTURE_TARGET * source["water_level"]
-                        current = ctx.voxel_grid.get("moisture", gx, gy, gz)
-                        if current < target:
-                            ctx.voxel_grid.set(
-                                "moisture", gx, gy, gz,
-                                min(target, current + replenish_effect.soil_refill_rate),
-                            )
-                    elif dist_sq <= max_r * max_r:
-                        current = ctx.voxel_grid.get("moisture", gx, gy, gz)
-                        if current > 0.3:
-                            ctx.voxel_grid.set(
-                                "moisture", gx, gy, gz,
-                                max(0.3, current - replenish_effect.soil_dry_rate),
-                            )
+            max_r = source["max_radius"]
+            target = WATER_SOURCE_MOISTURE_TARGET * source["water_level"]
+
+            # Cells within effective radius: refill toward target moisture.
+            for gx, gy, gz in ctx.voxel_grid.query_overlap(
+                (cx, 0.0, cz), eff_r):
+                current = ctx.voxel_grid.get("moisture", gx, gy, gz)
+                if current < target:
+                    ctx.voxel_grid.set(
+                        "moisture", gx, gy, gz,
+                        min(target, current + replenish_effect.soil_refill_rate),
+                    )
+
+            # Cells between effective and max radius: dry toward floor.
+            for gx, gy, gz in ctx.voxel_grid.query_overlap(
+                (cx, 0.0, cz), max_r):
+                # Skip cells already handled by the inner footprint.
+                dist_sq = ((gx + 0.5) * ctx.voxel_grid.cell_size - cx) ** 2 + \
+                          ((gz + 0.5) * ctx.voxel_grid.cell_size - cz) ** 2
+                if dist_sq <= eff_r * eff_r:
+                    continue
+                current = ctx.voxel_grid.get("moisture", gx, gy, gz)
+                if current > 0.3:
+                    ctx.voxel_grid.set(
+                        "moisture", gx, gy, gz,
+                        max(0.3, current - replenish_effect.soil_dry_rate),
+                    )
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -130,9 +135,10 @@ class WaterReplenishHandler(WorldProcessHandler):
 class SoilDrainHandler(WorldProcessHandler):
     """Handles entity-driven soil drain (nutrient/moisture uptake).
 
-    Autotrophs drain nutrients and moisture from the cell at their position.
-    With multi-resolution grids (#64), this handler will use query_overlap()
-    to distribute drain across all cells under an entity's footprint.
+    Autotrophs drain nutrients and moisture from cells under their footprint.
+    When *radius* is set on the effect, drain is distributed evenly across
+    all overlapping cells via ``query_overlap()``.  Without a radius,
+    falls back to single-cell behavior for backward compatibility.
     """
 
     handles = (SoilDrain,)
@@ -143,10 +149,17 @@ class SoilDrainHandler(WorldProcessHandler):
         if not isinstance(drain_effect, SoilDrain):
             return
 
-        gx, gy, gz = ctx.voxel_grid.world_to_grid(
-            *drain_effect.position)
-        ctx.voxel_grid.add(
-            drain_effect.layer, gx, gy, gz, drain_effect.amount)
+        if drain_effect.radius is not None and drain_effect.radius > 0:
+            cells = ctx.voxel_grid.query_overlap(
+                tuple(drain_effect.position), drain_effect.radius)
+            per_cell = drain_effect.amount / max(1, len(cells))
+            for gx, gy, gz in cells:
+                ctx.voxel_grid.add(drain_effect.layer, gx, gy, gz, per_cell)
+        else:
+            gx, gy, gz = ctx.voxel_grid.world_to_grid(
+                *drain_effect.position)
+            ctx.voxel_grid.add(
+                drain_effect.layer, gx, gy, gz, drain_effect.amount)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
@@ -157,8 +170,9 @@ class SoilDepositHandler(WorldProcessHandler):
     """Handles entity-driven soil deposit (organic matter, decomposition).
 
     Decomposers convert organic matter into nutrients. Entity deaths deposit
-    biomass as organic matter. With multi-resolution grids (#64), this handler
-    will use query_overlap() for footprint-aware deposits.
+    biomass as organic matter. When *radius* is set on the effect, deposit
+    is distributed evenly across all overlapping cells via ``query_overlap()``.
+    Without a radius, falls back to single-cell behavior for backward compatibility.
     """
 
     handles = (SoilDeposit,)
@@ -169,10 +183,17 @@ class SoilDepositHandler(WorldProcessHandler):
         if not isinstance(deposit_effect, SoilDeposit):
             return
 
-        gx, gy, gz = ctx.voxel_grid.world_to_grid(
-            *deposit_effect.position)
-        ctx.voxel_grid.add(
-            deposit_effect.layer, gx, gy, gz, deposit_effect.amount)
+        if deposit_effect.radius is not None and deposit_effect.radius > 0:
+            cells = ctx.voxel_grid.query_overlap(
+                tuple(deposit_effect.position), deposit_effect.radius)
+            per_cell = deposit_effect.amount / max(1, len(cells))
+            for gx, gy, gz in cells:
+                ctx.voxel_grid.add(deposit_effect.layer, gx, gy, gz, per_cell)
+        else:
+            gx, gy, gz = ctx.voxel_grid.world_to_grid(
+                *deposit_effect.position)
+            ctx.voxel_grid.add(
+                deposit_effect.layer, gx, gy, gz, deposit_effect.amount)
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
