@@ -21,7 +21,7 @@ from __future__ import annotations
 
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import Any
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Effect Types
@@ -214,6 +214,120 @@ class SetTarget(Effect):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
+# World-Process Effects (intents for soil, water, climate)
+# ═══════════════════════════════════════════════════════════════════════════════
+
+@dataclass(frozen=True, kw_only=True)
+class SoilEvaporation(Effect):
+    """Intent: evaporate soil moisture based on climate conditions.
+
+    The engine pre-computes the evaporation rate (including dt) so handlers
+    don't need time-step awareness. This keeps handlers pure functions of
+    context + effect data.
+    """
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    evap_rate: float  # pre-computed per-cell moisture loss (includes dt)
+    rain_suppressed: bool  # True during RAIN_SUPPRESSION_TICKS
+
+
+@dataclass(frozen=True, kw_only=True)
+class WaterReplenish(Effect):
+    """Intent: update water source levels and soil footprints.
+
+    Engine pre-computes evaporation/replenishment deltas (including dt) so
+    handlers don't need time-step awareness.
+    """
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    sources: list[dict]
+    evap_loss: float       # pre-computed water level loss per source (includes dt)
+    replenish_gain: float  # pre-computed water level gain per source (includes dt)
+    soil_refill_rate: float  # pre-computed moisture refill rate in water cells (includes dt)
+    soil_dry_rate: float     # pre-computed moisture drain outside effective radius (includes dt)
+
+
+@dataclass(frozen=True, kw_only=True)
+class SoilDrain(Effect):
+    """Intent: entity drains nutrients/moisture from overlapping grid cells."""
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    entity_id: str
+    position: list[float]
+    layer: str  # "nutrients" or "moisture"
+    amount: float  # negative delta to apply
+
+
+@dataclass(frozen=True, kw_only=True)
+class SoilDeposit(Effect):
+    """Intent: deposit organic matter into overlapping grid cells."""
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    entity_id: str
+    position: list[float]
+    layer: str  # "organic_matter"
+    amount: float
+
+
+@dataclass(frozen=True, kw_only=True)
+class RainEvent(Effect):
+    """Intent: apply rainfall across the world (soil + water sources + entities)."""
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    intensity: float
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# World-Process Handler Protocol + Context
+# ═══════════════════════════════════════════════════════════════════════════════
+
+if TYPE_CHECKING:
+    from .biome import BiomeConfig
+
+
+class WorldProcessContext:
+    """Read-only context passed to world-process handlers.
+
+    Provides access to voxels, entities, climate, and rate multipliers
+    without exposing mutation of the engine itself.
+    """
+
+    def __init__(
+        self,
+        tick: int,
+        voxel_grid: Any,  # VoxelManager — avoid circular import
+        biome: BiomeConfig | None,
+        climate: dict[str, float],
+        entities: dict[str, dict],
+        water_sources: list[dict],
+        rate_multipliers: dict[str, float],
+    ) -> None:
+        self.tick = tick
+        self.voxel_grid = voxel_grid
+        self.biome = biome
+        self.climate = climate
+        self.entities = entities
+        self.water_sources = water_sources
+        self.rate_multipliers = rate_multipliers
+
+
+@runtime_checkable
+class WorldProcessHandler(Protocol):
+    """Handles a world-process effect type at its own frequency.
+
+    Each handler declares which effect types it consumes via ``handles``
+    and how often to run via ``period`` (in ticks).  period=1 means every
+    tick; period=5 means every 5th tick, enabling multi-frequency process
+    execution without engine-side bookkeeping.
+    """
+
+    # Which effect types this handler consumes
+    handles: tuple[type[Effect], ...]
+
+    # How often to run (in ticks). 1 = every tick, 5 = every 5th tick.
+    period: int = 1
+
+    def resolve(self, effect: Effect, context: WorldProcessContext) -> None:
+        """Apply the world-process effect."""
+        ...
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
 # Event Recording
 # ═══════════════════════════════════════════════════════════════════════════════
 
@@ -255,11 +369,45 @@ class EffectBus:
     3. Conflicts are resolved (e.g., entity removed mid-tick).
     4. Effects are applied in priority order to the shared state.
 
+    World-process handlers can be registered separately and dispatched via
+    ``apply_world_batch()`` at their own frequencies.
+
     Usage:
         bus = EffectBus()
         effects = actor.resolve(ctx) + other_actor.resolve(other_ctx)
         bus.apply_effects(effects, entities, voxels, spawns, removals, events)
     """
+
+    def __init__(self) -> None:
+        self._world_handlers: list[WorldProcessHandler] = []
+
+    def register_world_handler(self, handler: WorldProcessHandler) -> None:
+        """Register a world-process handler with its frequency."""
+        self._world_handlers.append(handler)
+
+    def apply_world_batch(
+        self,
+        effects: list[Effect],
+        tick: int,
+        context: WorldProcessContext,
+    ) -> None:
+        """Dispatch world-process effects to registered handlers.
+
+        Each handler only runs when ``tick % period == 0``, enabling
+        multi-frequency process execution without engine-side bookkeeping.
+
+        Args:
+            effects: List of world-process effect intents.
+            tick: Current simulation tick number.
+            context: Read-only WorldProcessContext for handlers.
+        """
+        for effect in effects:
+            for handler in self._world_handlers:
+                if type(effect) not in handler.handles:
+                    continue
+                if tick % handler.period != 0:
+                    continue  # Skip — not this handler's turn
+                handler.resolve(effect, context)
 
     def apply_effects(
         self,

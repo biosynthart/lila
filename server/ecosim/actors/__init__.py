@@ -116,6 +116,9 @@ class FlowContext(InteractionContext):
     """
     dt: float = 0.1
     rain_ticks_remaining: int = 0
+    # Ticks since a rain event ended — used by flow actors for post-collapse
+    # recovery boosts (e.g., reproduction rebound after environmental recovery).
+    recent_rain_recovery_ticks: int = 0
     _entities: dict[str, Any] = field(default_factory=dict, repr=False)
     # Callable to look up DerivedParams for any entity by species_id.
     # Provided by engine so actors can query other entities' traits.
