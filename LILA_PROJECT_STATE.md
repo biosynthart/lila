@@ -86,10 +86,11 @@ lila/
 │   ├── uv.lock                     # deterministic dependency lockfile
 │   ├── ecosim/                     # core simulation library
 │   │   ├── __init__.py
-│   │   ├── engine.py               # hybrid automaton (dual-path: trait + legacy)
+│   │   ├── engine.py               # hybrid automaton (trait-based, actor-driven)
 │   │   ├── entities.py             # entity schemas, init_entity()
 │   │   ├── biome.py                # biome presets → BiomeConfig
-│   │   ├── voxel_manager.py        # sparse 3D grid, delta tracking
+│   │   ├── voxel_manager.py        # VoxelGrid protocol + UniformVoxelGrid (multi-resolution ready)
+│   │   ├── world_processes.py      # World-process handlers (evaporation, water replenish, soil drain/deposit)
 │   │   ├── model_adapter.py        # MotorAdapter protocol, ContextSpec
 │   │   ├── worker.py               # async WS tick loop + HTTP viz server
 │   │   ├── traits.py               # [M2] TraitVector, allometric derivations
@@ -120,6 +121,7 @@ lila/
 │   │   ├── test_ecosim.py          # unit tests (12 tests)
 │   │   ├── test_traits.py          # [M2] allometric derivation tests (54)
 │   │   └── test_movement_actor.py  # [M3] movement actor behavior tests (36)
+│   │   └── test_voxel_grid.py    # VoxelGrid protocol + query_overlap/walk_layer (28 tests)
 │   └── weights/
 │       └── (motion_v0.json)        # placeholder for trained weights
 │
@@ -247,9 +249,16 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 - `create_adapter()` factory
 
 **Voxel manager:**
-- Sparse 3D grid, four layers: nutrients, moisture, temperature, organic_matter
+- `VoxelGrid` Protocol abstracts storage strategy (uniform grid → octree swap without changing call sites)
+- `UniformVoxelGrid` implements the protocol with `query_overlap()` for spherical footprint queries and `walk_layer()` for sparse iteration
+- Four layers: nutrients, moisture, temperature, organic_matter
 - Threshold-gated dirty tracking for delta packets
 - `initialize_from_soil` — correctly initializes all three computed layers (break bug fixed)
+
+**World-process handlers:**
+- Pluggable handlers dispatched through EffectBus at their own frequencies
+- SoilEvaporationHandler, WaterReplenishHandler, SoilDrainHandler, SoilDepositHandler
+- Handlers depend on VoxelGrid protocol, not concrete classes
 
 ### Browser Visualizer
 
@@ -285,7 +294,7 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 - **Docker Compose** — single command: `docker compose up --build`
 - **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
-- **GitHub CI** — pytest (106 tests) + ruff lint, Python 3.11/3.12
+- **GitHub CI** — pytest (134 tests) + ruff lint, Python 3.11/3.12
 - **uv workflow** — `uv sync` for local dev, deterministic lockfile
 - **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
 
@@ -420,7 +429,7 @@ Competition is implicit via shared resource depletion. Water access derives from
 ### Step 2.5 — TraitCompiler ✅
 Runs once at world initialization. Takes list of TraitVectors + BiomeConfig, produces: per-entity DerivedParams, sparse interaction matrix, resource tag registry, flee index, diet preference ordering.
 
-**Deliverable:** `ecosim/trait_compiler.py` (285 lines) — `TraitCompiler`, `CompiledEcology`, `LegacyParams`, `compile_world()`, `parse_species_from_json()`
+**Deliverable:** `ecosim/trait_compiler.py` (285 lines) — `TraitCompiler`, `CompiledEcology`, `compile_world()`, `parse_species_from_json()`
 
 ### Step 2.6 — Two-Pool Nutrient Refactor ❌ (NEXT)
 Split `nutrients` voxel layer into `nutrients_fast` and `nutrients_slow` (voxel layers 4 → 5):
@@ -448,7 +457,8 @@ else:                                   → _flow_consumer
 ```
 All numeric constants the tick loop uses come from DerivedParams. Only 1 remaining `entity["type"]` reference (spatial hash TODO, not species dispatch).
 
-Backward compatibility: worlds without `species_definitions` key fall back to LegacyParams.
+All worlds must include a ``species_definitions`` key. Worlds without it
+will fail at init with a clear error — there is no fallback.
 
 **Deliverable:** Refactored `ecosim/engine.py` (1772 lines) — reads from `self.compiled.derived_params`, `self.compiled.get_interactions()`, `self.compiled.get_diet_order()`, `self.compiled.get_flee_targets()`
 
@@ -462,10 +472,10 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Deliverable:** `examples/species_definitions.json` — 8 species trait vectors. `demo_world.json` updated with `species_definitions` key.
 
 ### Test Suite ✅
-- **94 → 106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
+- **94 → 134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
 - Interaction template tests: herbivory matching/preference, predation with mass ratios, pollination with linger/cooldown, decomposition mineralization boost
 - Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
-- Backward compatibility: legacy world returns LegacyParams, trait world returns CompiledEcology
+- Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
 - JSON parsing: parse_species_from_json, missing key handling, full definitions file
 
 ### Step 2.9 — Calibration & Regression Testing ❌
@@ -479,7 +489,7 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 - `ecosim/traits.py` — TraitVector, DerivedParams, allometric derivation functions (417 lines)
 - `ecosim/interactions.py` — InteractionTemplate base + 4 concrete templates (343 lines)
 - `ecosim/trait_compiler.py` — TraitCompiler class (285 lines)
-- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (now ~2350 lines with actor integration + legacy fallback)
+- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (now ~782 lines after decomposition)
 - `examples/species_definitions.json` — 8 species trait vectors
 - Updated `examples/demo_world.json` — includes `species_definitions` key
 - `tests/test_actors.py` — 18 tests for EffectBus, effect priority, conflict resolution
@@ -539,35 +549,25 @@ All actors are pure functions: read-only context → list of effects. No side ef
 **Deliverable:** `ecosim/actors/interaction_actors.py` (554 lines)
 
 #### Step 3.4 — Engine Integration + Dual-Path Architecture ✅
-The engine's step() method now uses a **dual-path architecture**:
+The engine's step() method uses an **actor-based architecture**:
 
-**Trait path** (worlds with `species_definitions`):
+**Trait path** (all worlds require `species_definitions`):
+- Phase 1 flow: flow_actor_registry[species].resolve(ctx) → EffectBus.apply_flow_batch()
 - Phase 2 interactions: actor_registry[species].resolve(ctx) → EffectBus.apply_batch()
-- Flow and guards route by diet_type (consumer/producer/decomposer)
+- Phase 3 guards: guard_actor_registry[species].resolve(ctx) → EffectBus.apply_effects_with_om_deposit()
+- Phase 4 voxel effects: engine emits SoilDrain/SoilDeposit intents → handlers via EffectBus
+- Phase 5 world processes: engine emits SoilEvaporation/WaterReplenish intents → handlers via EffectBus
 
-**Legacy path** (worlds without `species_definitions`):
-- All phases use inline entity-type-based logic
-- `_apply_flow()` routes by entity type: _flow_animal/plant/insect/microorganism
-- `_resolve_interactions()` uses inline flee/predation/herbivory/pollination
-- `_evaluate_guards()` routes by entity type: _guards_animal/plant/insect/microorganism
-
-The `_is_legacy` flag determines which path is taken at each phase boundary. This ensures backward compatibility with all existing world files.
+All worlds must include a ``species_definitions`` key. Worlds without it
+will fail at init with a clear error — there is no fallback.
 
 **Deliverable:** Refactored `ecosim/engine.py` (2353 lines)
 
-#### Step 3.5 — Legacy Guard/Flow Restoration ✅
-The trait-based refactoring in commit 1c04646 removed entity-type-based routing from `_apply_flow()` and `_evaluate_guards()`, causing legacy worlds to silently skip all flow and guard processing (frozen simulation). Fixed by adding full legacy fallback paths:
-
-- **Legacy flow functions**: _flow_animal, _flow_plant, _flow_insect, _flow_microorganism — entity-type-based continuous state evolution using metadata directly
-- **Legacy guard functions**: _guards_animal, _guards_plant, _guards_insect, _guards_microorganism — entity-type-based discrete state transitions with hysteresis bands
-- **Legacy helpers**: _find_mate_legacy, _reproduction_event_legacy, _deposit_organic_matter_legacy, _move_toward_target_legacy, _try_plant_spread_legacy
-
-All legacy functions use metadata (body_mass, lifespan, diet) instead of DerivedParams.
-
-**Deliverable:** `ecosim/engine.py` — 514 lines added in commit ec021eb
+#### Step 3.5 — Legacy Guard/Flow Removal ✅
+The legacy inline functions (_flow_animal, _flow_plant, etc.) were removed in favor of the actor system. All worlds now require `species_definitions` and use trait-based actors exclusively.
 
 ### Test Suite ✅
-- **106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
+- **134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
 - Smoke test shows state variables evolving correctly for both trait and legacy worlds
 - Bee colony transitions to FORAGING, events fire, entities move toward targets
 
@@ -576,7 +576,7 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 - `ecosim/effects.py` — Effect dataclasses + EffectBus (547 lines after Phase 2 additions)
 - `ecosim/actors/__init__.py` — InteractionContext, InteractionActor base, FlowActor/GuardActor subtypes, registries, builders (387 lines)
 - `ecosim/actors/interaction_actors.py` — FleeActor, PredationActor, HerbivoryActor, PollinationActor (554 lines)
-- Refactored `engine.py` — dual-path architecture: trait-based actors + legacy fallback, decomposed into focused modules (744 lines after extraction)
+- Refactored `engine.py` — actor-based architecture: trait-based actors for all phases, decomposed into focused modules (782 lines after extraction)
 
 ### Milestone 3 Phase 2 Deliverables ✅
 **Shipped:**
@@ -584,7 +584,7 @@ All legacy functions use metadata (body_mass, lifespan, diet) instead of Derived
 - `ecosim/actors/guard_actors.py` — ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor (624 lines)
 - New effect: `DepositOrganicMatter` — organic matter deposition on entity death
 - EffectBus additions: `apply_flow_batch()`, `apply_effects_with_om_deposit()`
-- Engine step(): flow/guard actors used for trait-based worlds; legacy inline functions retained as fallback
+- Engine step(): flow/guard/interaction actors used for all worlds; world-process handlers dispatched through EffectBus
 
 **New files: 2. Modified files: 3. No new external dependencies.**
 
@@ -596,7 +596,7 @@ The monolithic engine has been decomposed into focused modules:
 - **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection as pure-function actor emitting SetTarget/ClearTarget effects
 - **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine
 
-**Result:** `engine.py` reduced from ~1338 → 744 lines. Test suite: 94 → 106 tests.
+**Result:** `engine.py` reduced from ~1338 → 782 lines. Test suite: 94 → 134 tests.
 
 ---
 
@@ -638,12 +638,63 @@ The monolithic engine has been decomposed into focused modules:
 - **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects. Priority chain: swarming → drinking → mate-seeking → foraging → hunting → idle pollinator → wander. Integrated into ConsumerFlowActor.resolve().
 - **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine (_pick_movement_target, _find_nearest_food_by_preference, _find_nearest_prey, etc.) superseded by MovementActor.
 
-**Result:** `engine.py` reduced from ~2465 → 744 lines. All 106 tests pass.
+**Result:** `engine.py` reduced from ~2465 → 782 lines. All 134 tests pass.
 
 ### Test Suite ✅
-- **106 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36)
+- **134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
 - New pollinator dispersal tests: per-flower cap, visit limit enforcement, wander cooldown, post-visit cooldown
 - SetEntityAttr effect application tests
+
+### World-Process Handlers (`ecosim/world_processes.py`, 211 lines) ✅
+Extracted inline engine methods into pluggable handlers dispatched through EffectBus at their own frequencies. Each handler implements `WorldProcessHandler` and declares which effect types it consumes.
+
+**Handlers:**
+- **SoilEvaporationHandler** — evaporates soil moisture based on climate conditions, uses `walk_layer()` for sparse iteration (replaces O(grid²) full scan)
+- **WaterReplenishHandler** — updates water source levels and soil moisture footprints using `query_overlap()` for footprint-aware cell queries
+- **SoilDrainHandler** — entity-driven nutrient/moisture uptake; distributes drain across all cells under entity footprint when `radius` is set, falls back to single-cell without it
+- **SoilDepositHandler** — decomposer OM→nutrient conversion and death deposits; same radius-aware distribution as SoilDrain
+
+**Effect types:**
+- `SoilEvaporation`, `WaterReplenish`, `SoilDrain`, `SoilDeposit` — world-process intents emitted by engine, resolved by handlers through EffectBus
+- `SoilDrain` and `SoilDeposit` carry optional `radius: float | None` field for footprint-aware distribution
+
+**Engine integration:**
+- Phase 4 (voxel effects): engine emits SoilDrain/SoilDeposit intents with entity position + amount; handlers resolve overlap using grid's `query_overlap()`
+- Phase 5 (world processes): engine emits SoilEvaporation and WaterReplenish intents; handlers run at configurable frequencies via EffectBus
+- Autotroph effects now pass `canopy_radius` as drain footprint radius — trees drain from all cells under their canopy, not just one cell
+- Rain system uses `walk_layer()` for soil moisture/nutrient boosts (skips empty regions)
+- Water source initialization uses `query_overlap()` for footprint seeding
+
+**Deliverable:** `ecosim/world_processes.py` (211 lines) — 4 handlers + registration helper. All handlers depend on VoxelGrid protocol, not concrete classes.
+
+### VoxelGrid Protocol (`ecosim/voxel_manager.py`, 287 lines) ✅
+Abstracts voxel storage strategy via `VoxelGrid` Protocol so that engine and handler code can work with uniform grids today and swap in an octree later without changing call sites. Implements **phases 0-2** of [issue #64](https://github.com/hellolifeforms/lila/issues/64).
+
+**Phase 0 — Protocol definition:**
+- `VoxelGrid` Protocol defines: `get()`, `set()`, `add()`, `world_to_grid()`, `query_overlap()`, `walk_layer()`, `get_delta_packet()`
+- Renamed current class to `UniformVoxelGrid`; kept `VoxelManager` as backward-compat alias
+- Added `_distance_3d_sq()` helper for squared Euclidean distance
+
+**Phase 1 — Engine adoption (behavior-preserving refactor):**
+- `query_overlap(center, radius)` — finds all grid cells whose centers fall within a spherical region using bounding-box early-out; used by SoilDrain/Deposit handlers and water footprint updates
+- `walk_layer(layer, callback)` — sparse iteration over existing cells only; replaces O(grid²) full walks in evaporation and rainfall handlers
+- All engine touchpoints updated: autotroph drain uses canopy_radius as footprint, rain uses walk_layer(), water init uses query_overlap()
+
+**Phase 2 — Effect-based world processes (already done via #63/#65):**
+- Handlers already dispatch through EffectBus at their own frequencies
+- SoilDrain/SoilDeposit effects carry optional radius field for footprint-aware distribution
+- All handlers depend on VoxelGrid protocol, not concrete class
+
+**Test suite:** `test_voxel_grid.py` (28 tests) covering:
+- Protocol conformance (isinstance checks, required attributes/methods)
+- `query_overlap()` correctness (bounding box early-out, cell center distance, edge clamping, different cell sizes)
+- `walk_layer()` sparsity (only visits existing cells, skips defaults)
+- Backward compatibility (`VoxelManager` alias works identically)
+- Handler integration (drain with/without radius, deposit with radius, evaporation walk_layer usage, rain suppression)
+
+**Remaining work:** [Issue #68](https://github.com/hellolifeforms/lila/issues/68) tracks phases 3-4:
+- Phase 3: `OctreeVoxelGrid` implementation (~300-500 lines, same protocol interface)
+- Phase 4: Refinement policy (configurable triggers, periodic coarsening)
 
 ---
 
@@ -659,7 +710,7 @@ The monolithic engine has been decomposed into focused modules:
 The actor system is complete across all three phases:
 - [x] ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor — continuous state evolution as effect-emitting actors
 - [x] ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor — discrete state transitions as effect-emitting actors
-- [x] Engine step() uses flow/guard actors for trait worlds (legacy fallback retained)
+- [x] Engine step() uses flow/guard/interaction actors for all worlds; world-process handlers dispatched through EffectBus
 
 ### New Species — Trait Vectors Defined ✅, Validation Pending ❌
 

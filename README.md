@@ -247,7 +247,8 @@ lila/
 │   │   ├── trait_compiler.py# Trait → derived params compiler
 │   │   ├── interactions.py  # Interaction templates
 │   │   ├── biome.py         # Biome presets
-│   │   ├── voxel_manager.py # Sparse 3D grid
+│   │   ├── voxel_manager.py # VoxelGrid protocol + UniformVoxelGrid (multi-resolution ready)
+│   │   ├── world_processes.py  # World-process handlers (evaporation, water replenish, soil drain/deposit)
 │   │   ├── constants.py     # Universal simulation constants (single source of truth)
 │   │   ├── model_adapter.py # BYOM protocol
 │   │   ├── effects.py       # Effect dataclasses + EffectBus (immutable effect pipeline)
@@ -264,6 +265,7 @@ lila/
 │   │   └── adapters/        # Built-in motor models
 │   ├── examples/            # Demo world definitions
 │   └── tests/
+│       ├── test_voxel_grid.py    # VoxelGrid protocol + query_overlap/walk_layer (28 tests)
 ├── search/
 │   ├── lila_search/         # ASAL-compatible search (see below)
 │   │   ├── substrate.py     # Init/Step/Render protocol
@@ -295,10 +297,6 @@ The `EffectBus` collects all effects, sorts by priority, resolves conflicts,
 and applies them atomically in a single pass. This enables deterministic replay
 and clean separation of concerns.
 
-The engine uses a **dual-path architecture**: trait-based worlds use the actor
-system; legacy worlds (without `species_definitions`) fall back to inline logic.
-This ensures backward compatibility with all existing world files.
-
 ### Extracted subsystems
 
 The monolithic engine has been decomposed into focused modules:
@@ -310,9 +308,12 @@ The monolithic engine has been decomposed into focused modules:
 - **MovementSystem** (`movement_system.py`) — movement gate policy (linger/cooldown
 decrements, ACTIVE_MOVEMENT_STATES check, pollinator exception) and kinematics
 (move toward target at species speed, clamp to grid, clear on arrival)
-- **MovementActor** (`actors/movement_actors.py`) — target selection as a pure-function
-  actor emitting SetTarget/ClearTarget effects (priority: swarming → drinking →
-  mate-seeking → foraging → hunting → idle pollinator → wander)
+- **VoxelGrid protocol** (`voxel_manager.py`) — abstracts storage strategy via Protocol interface;
+  `UniformVoxelGrid` implements it with `query_overlap()` for spherical footprint queries and
+  `walk_layer()` for sparse iteration; swap-in ready for future octree implementation
+- **World-process handlers** (`world_processes.py`) — pluggable handlers dispatched through EffectBus
+  at their own frequencies: SoilEvaporationHandler, WaterReplenishHandler, SoilDrainHandler,
+  SoilDepositHandler. Handlers depend on the VoxelGrid protocol, not concrete classes
 
 ## Background
 
@@ -382,7 +383,9 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
 - Actor effects architecture — immutable EffectBus with flow/guard/interaction/movement actors
 - MovementActor — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects
-- Engine decomposition — LayoutManager (world loading + randomization), SpatialIndex (neighbor queries via strategy interface), MovementSystem (gate policy + kinematics)
+- Engine decomposition — LayoutManager, SpatialIndex, MovementSystem, MovementActor
+- VoxelGrid protocol + UniformVoxelGrid with query_overlap() and walk_layer()
+- World-process handlers dispatched through EffectBus (evaporation, water replenish, soil drain/deposit)
 - Universal constants module (`constants.py`) — single source of truth for all simulation physics
 - Pollinator dispersal mechanics — per-flower caps, visit limits, wander cooldowns, post-visit cooldowns
 - ASAL substrate protocol — Init(θ)/Step(θ)/Render(θ) wrapping ecosim
