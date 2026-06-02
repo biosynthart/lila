@@ -110,7 +110,21 @@ RAIN_WATER_SOURCE_BOOST = 0.4   # water source level increase × intensity
 RAIN_SUPPRESSION_TICKS = 80     # ticks of suppressed evaporation after rain
 RAIN_PLANT_HYDRATION = 0.2      # direct plant hydration boost × intensity
 RAIN_PLANT_HEALTH = 0.1         # direct plant health boost × intensity
-RAIN_ANIMAL_HYDRATION = 0.1     # direct animal hydration boost × intensity
+# Animal rain hydration: base boost scaled inversely by current hydration.
+# Critically dehydrated animals (hydration ≈ 0) get up to 2× the base,
+# well-hydrated animals (hydration > 0.7) get only half. This prevents
+# post-collapse death spirals where a single rain event can't save them.
+# Animal rain hydration: base boost scaled inversely by current hydration.
+# Critically dehydrated animals (hydration ≈ 0) get up to 2× the base,
+# well-hydrated animals (hydration > 0.7) get only half. This prevents
+# post-collapse death spirals where a single rain event can't save them.
+RAIN_ANIMAL_HYDRATION = 0.15     # direct animal hydration boost × intensity
+
+# Post-rain reproduction rebound: after environmental recovery (rain),
+# surviving animals get a temporary boost to reproductive drive build rate
+# so populations can recover before individuals die of old age/starvation.
+RAIN_REPRO_RECOVERY_TICKS = 800   # ticks the boost remains active (~80s at 10Hz)
+RAIN_REPRO_BOOST_MULTIPLIER = 3.0  # multiplier on repro_drive_build during recovery
 
 # ── Soil evaporation ──────────────────────────────────────────────────────────
 SOIL_EVAP_BASE_RATE = 0.001     # base soil moisture loss per tick

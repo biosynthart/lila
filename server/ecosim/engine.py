@@ -80,18 +80,25 @@ from .constants import (
     RAIN_NUTRIENT_BOOST,
     RAIN_PLANT_HEALTH,
     RAIN_PLANT_HYDRATION,
+    RAIN_REPRO_RECOVERY_TICKS,
     RAIN_SUPPRESSION_TICKS,
     RAIN_WATER_SOURCE_BOOST,
     SOIL_EVAP_BASE_RATE,
     SOIL_EVAP_HUMIDITY_FACTOR,
     SOIL_EVAP_TEMP_SCALE,
-    SOIL_MOISTURE_FLOOR,
     WATER_EVAPORATION_RATE,
     WATER_REFILL_RATE,
     WATER_REPLENISH_RATE,
-    WATER_SOURCE_MOISTURE_TARGET,
 )
-from .effects import EffectBus
+from .effects import (
+    EffectBus,
+    SoilDeposit,
+    SoilDrain,
+    SoilEvaporation,
+    WaterReplenish,
+    WorldProcessContext,
+)
+from .world_processes import register_default_world_handlers
 from .entities import init_entity, is_alive
 from .layout import LayoutManager
 from .model_adapter import MotorAdapter, build_context
@@ -192,11 +199,16 @@ class EcosystemEngine:
         # ── Internal bookkeeping ──
         self._events: list[dict[str, Any]] = []
         self._rain_ticks_remaining: int = 0
+        # Ticks remaining for post-rain reproduction rebound boost.
+        # Set when rain occurs; decrements each tick. Flow actors use this
+        # to temporarily boost repro_drive_build after environmental recovery.
+        self._recent_rain_recovery_ticks: int = 0
         self._spawns: list[dict[str, Any]] = []
         self._removals: list[str] = []
 
-        # ── Effect bus ──
+        # ── Effect bus + world-process handlers ──
         self.effect_bus = EffectBus()
+        register_default_world_handlers(self.effect_bus)
 
         # ── Actor registries ──
         self.actor_registry = build_interaction_registry(self.compiled)
@@ -339,15 +351,62 @@ class EcosystemEngine:
             deposit_fn=self._deposit_organic_matter,
         )
 
-        # Phase 4: Voxel effects — entity impact on soil
+        # Phase 4: Voxel effects — entity impact on soil (effect-based)
+        voxel_effects = []
         for entity in list(self.entities.values()):
             if is_alive(entity):
-                self._apply_voxel_effects(entity, dt)
+                self._build_voxel_effects(entity, dt, voxel_effects)
+        world_ctx = WorldProcessContext(
+            tick=self.tick,
+            voxel_grid=self.voxels,
+            biome=self.biome,
+            climate=self.climate,
+            entities=self.entities,
+            water_sources=self.water_sources,
+            rate_multipliers={
+                "consumption": self.rate_consumption,
+                "hunger": self.rate_hunger,
+                "thirst": self.rate_thirst,
+                "growth": self.rate_growth,
+                "reproduction": self.rate_reproduction,
+                "water_replenishment": self.rate_water_replenish,
+            },
+        )
+        self.effect_bus.apply_world_batch(voxel_effects, self.tick, world_ctx)
 
-        # Phase 5: Water — source evaporation & replenishment
+        # Phase 5: Water & soil — world-level processes (effect-based)
+        # Rain suppression counter is managed here (not in handler) so it
+        # decrements every tick regardless of handler frequency.
+        rain_suppressed = self._rain_ticks_remaining > 0
+        if self._rain_ticks_remaining > 0:
+            self._rain_ticks_remaining -= 1
+
+        # Post-rain reproduction recovery window — decrement each tick.
+        if self._recent_rain_recovery_ticks > 0:
+            self._recent_rain_recovery_ticks -= 1
+
+        world_effects: list[Any] = [
+            SoilEvaporation(
+                tick=self.tick,
+                evap_rate=(
+                    SOIL_EVAP_BASE_RATE
+                    * (self.climate.get("temperature", 20.0) / SOIL_EVAP_TEMP_SCALE)
+                    * (1.0 - self.climate.get("humidity", 0.5) * SOIL_EVAP_HUMIDITY_FACTOR)
+                    * self.rate_thirst * dt
+                ),
+                rain_suppressed=rain_suppressed,
+            ),
+        ]
         if self.water_sources:
-            self._replenish_water_sources(dt)
-        self._evaporate_soil(dt)
+            world_effects.append(WaterReplenish(
+                tick=self.tick,
+                sources=self.water_sources,
+                evap_loss=WATER_EVAPORATION_RATE * self.rate_thirst * dt,
+                replenish_gain=WATER_REPLENISH_RATE * self.rate_water_replenish * dt,
+                soil_refill_rate=WATER_REFILL_RATE * self.rate_water_replenish * dt,
+                soil_dry_rate=0.02 * dt,
+            ))
+        self.effect_bus.apply_world_batch(world_effects, self.tick, world_ctx)
 
         # Phase 6: Motor — BYOM adapter inference
         self._apply_motor_inference()
@@ -427,7 +486,8 @@ class EcosystemEngine:
     def _build_flow_context(self, entity: dict[str, Any], dt: float) -> FlowContext:
         """Build a flow context for one entity (Phase 2).
 
-        Extends InteractionContext with dt and rain_ticks_remaining.
+        Extends InteractionContext with dt, rain_ticks_remaining, and
+        recent_rain_recovery_ticks.
         """
         params = self._get_params(entity)
         rate_multipliers = {
@@ -451,6 +511,7 @@ class EcosystemEngine:
             rate_multipliers=rate_multipliers,
             dt=dt,
             rain_ticks_remaining=self._rain_ticks_remaining,
+            recent_rain_recovery_ticks=self._recent_rain_recovery_ticks,
             _entities=self.entities,
             _get_params=self._get_params,  # for querying other entities' traits
             _grid_max=self._grid_max,
@@ -487,32 +548,66 @@ class EcosystemEngine:
         )
 
     # ═══════════════════════════════════════════════════════════════════════
-    def _apply_voxel_effects(self, e: dict[str, Any], dt: float) -> None:
-        """Apply entity-driven changes to the voxel soil grid.
+    def _build_voxel_effects(
+        self,
+        e: dict[str, Any],
+        dt: float,
+        effects: list,
+    ) -> None:
+        """Build world-process effects for entity-driven soil changes.
 
-        Autotrophs drain nutrients and moisture. Decomposers convert
-        organic matter into nutrients.
+        Autotrophs emit SoilDrain (nutrients + moisture). Decomposers emit
+        SoilDeposit (organic matter consumption) and SoilDrain with negative
+        amount (nutrient release from decomposition).
+
+        Args:
+            e: Entity dict.
+            dt: Time step.
+            effects: List to append world-process effects into.
         """
         params = self._get_params(e)
         if params is None:
             return
-        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
 
         if params.diet_type == "autotroph":
             n_demand = e["metadata"].get("nutrient_demand", {})
             total_demand = (sum(n_demand.values())
                            if isinstance(n_demand, dict)
                            else PLANT_DEFAULT_NUTRIENT_DEMAND)
-            self.voxels.add("nutrients", gx, gy, gz, -total_demand * dt)
+            effects.append(SoilDrain(
+                tick=self.tick,
+                entity_id=e["id"],
+                position=e["position"],
+                layer="nutrients",
+                amount=-total_demand * dt,
+            ))
             base_demand = PLANT_BASE_WATER_DEMAND
             size_factor = 1.0 + (params.canopy_radius or 0.0) * 0.3
-            self.voxels.add("moisture", gx, gy, gz, -base_demand * size_factor * dt)
+            effects.append(SoilDrain(
+                tick=self.tick,
+                entity_id=e["id"],
+                position=e["position"],
+                layer="moisture",
+                amount=-base_demand * size_factor * dt,
+            ))
 
         elif params.diet_type == "decomposer":
             activity = e["state_vars"].get("activity", 0)
             rate = self.biome.decomposition_rate * activity * dt
-            self.voxels.add("organic_matter", gx, gy, gz, -rate)
-            self.voxels.add("nutrients", gx, gy, gz, rate * DECOMP_NUTRIENT_EFFICIENCY)
+            effects.append(SoilDeposit(
+                tick=self.tick,
+                entity_id=e["id"],
+                position=e["position"],
+                layer="organic_matter",
+                amount=-rate,
+            ))
+            effects.append(SoilDeposit(
+                tick=self.tick,
+                entity_id=e["id"],
+                position=e["position"],
+                layer="nutrients",
+                amount=rate * DECOMP_NUTRIENT_EFFICIENCY,
+            ))
 
     def _deposit_organic_matter(self, e: dict, p: DerivedParams | dict | None) -> None:
         """Deposit entity biomass into the organic matter voxel layer on death."""
@@ -531,7 +626,7 @@ class EcosystemEngine:
         self.voxels.add("organic_matter", gx, gy, gz, deposit)
 
     # ═══════════════════════════════════════════════════════════════════════
-    # Phase 5: Water & Soil — World-Level Processes
+    # Water Source Initialization
     # ═══════════════════════════════════════════════════════════════════════
 
     def _init_water_source_moisture(self, source: dict[str, Any]) -> None:
@@ -547,53 +642,6 @@ class EcosystemEngine:
                 if (ix - cx) ** 2 + (iz - cz) ** 2 <= r * r:
                     gx, gy, gz = self.voxels.world_to_grid(float(ix), 0.0, float(iz))
                     self.voxels.set("moisture", gx, gy, gz, 0.95)
-
-    def _evaporate_soil(self, dt: float) -> None:
-        """Background soil moisture evaporation (suppressed during rain)."""
-        if self._rain_ticks_remaining > 0:
-            self._rain_ticks_remaining -= 1
-            return
-        temp = self.climate.get("temperature", 20.0)
-        humidity = self.climate.get("humidity", 0.5)
-        evap = (SOIL_EVAP_BASE_RATE * (temp / SOIL_EVAP_TEMP_SCALE)
-                * (1.0 - humidity * SOIL_EVAP_HUMIDITY_FACTOR) * self.rate_thirst * dt)
-        dims = self.voxels.dimensions
-        for x in range(dims[0]):
-            for z in range(dims[2]):
-                current = self.voxels.get("moisture", x, 0, z)
-                if current > SOIL_MOISTURE_FLOOR:
-                    self.voxels.set("moisture", x, 0, z,
-                                    max(SOIL_MOISTURE_FLOOR, current - evap))
-
-    def _replenish_water_sources(self, dt: float) -> None:
-        """Evaporate and replenish water sources; update soil moisture footprint."""
-        for source in self.water_sources:
-            evap_loss = WATER_EVAPORATION_RATE * self.rate_thirst * dt
-            replenish = WATER_REPLENISH_RATE * self.rate_water_replenish * dt
-            source["water_level"] = max(0.0, min(1.0,
-                source["water_level"] - evap_loss + replenish))
-            source["radius"] = source["max_radius"] * source["water_level"]
-
-            # Update soil moisture in water footprint
-            cx, _, cz = source["position"]
-            max_r = source["max_radius"]
-            eff_r = source["radius"]
-            for ix in range(int(cx - max_r), int(cx + max_r) + 1):
-                for iz in range(int(cz - max_r), int(cz + max_r) + 1):
-                    dist_sq = (ix - cx) ** 2 + (iz - cz) ** 2
-                    gx, gy, gz = self.voxels.world_to_grid(float(ix), 0.0, float(iz))
-                    if dist_sq <= eff_r * eff_r:
-                        target = WATER_SOURCE_MOISTURE_TARGET * source["water_level"]
-                        current = self.voxels.get("moisture", gx, gy, gz)
-                        if current < target:
-                            refill = WATER_REFILL_RATE * self.rate_water_replenish * dt
-                            self.voxels.set("moisture", gx, gy, gz,
-                                            min(target, current + refill))
-                    elif dist_sq <= max_r * max_r:
-                        current = self.voxels.get("moisture", gx, gy, gz)
-                        if current > 0.3:
-                            self.voxels.set("moisture", gx, gy, gz,
-                                            max(0.3, current - 0.02 * dt))
 
     def apply_rain(self, intensity: float = 0.5) -> None:
         """Apply a rain event across the entire grid.
@@ -627,6 +675,11 @@ class EcosystemEngine:
         # Suppress evaporation
         self._rain_ticks_remaining = RAIN_SUPPRESSION_TICKS
 
+        # Start post-rain reproduction recovery window: surviving animals get
+        # a temporary boost to reproductive drive build so populations can
+        # recover before individuals die of old age/starvation.
+        self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
+
         # Direct entity hydration/health boost
         for ent in self.entities.values():
             if not is_alive(ent):
@@ -638,8 +691,14 @@ class EcosystemEngine:
                 sv["health"] = min(1.0, sv["health"] + RAIN_PLANT_HEALTH * intensity)
             elif params and params.speed > 0:
                 if "hydration" in sv:
+                    # Scale boost inversely with current hydration: critically
+                    # dehydrated animals get up to 2× the base, well-hydrated
+                    # ones get only half. This prevents post-collapse death
+                    # spirals where a single rain event can't save them.
+                    current = sv["hydration"]
+                    scale = max(0.5, min(2.0, 1.0 + (1.0 - current)))
                     sv["hydration"] = min(
-                        1.0, sv["hydration"] + RAIN_ANIMAL_HYDRATION * intensity)
+                        1.0, current + RAIN_ANIMAL_HYDRATION * intensity * scale)
 
         self._events.append({
             "type": "RAIN", "tick": self.tick, "intensity": intensity,

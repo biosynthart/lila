@@ -52,6 +52,7 @@ from ..constants import (
     WATER_DRY_THRESHOLD,
     WATER_PROXIMITY_COLONY_FACTOR,
     WATER_PROXIMITY_HUNGER_FACTOR,
+    RAIN_REPRO_BOOST_MULTIPLIER,
 )
 from ..effects import (
     SetStateVar,
@@ -177,9 +178,17 @@ class ConsumerFlowActor:
         if (sv["energy"] > REPRO_BUILD_MIN_ENERGY
                 and sv["hunger"] < REPRO_BUILD_MAX_HUNGER
                 and sv.get("health", 1.0) > REPRO_BUILD_MIN_HEALTH):
+            # Post-collapse rebound: after rain, surviving animals get a temporary
+            # boost to reproductive drive build so populations can recover before
+            # individuals die of old age/starvation. Without this, K-selected species
+            # (e.g. deer) need ~2200 ticks of perfect conditions to reach threshold;
+            # with the 3× boost they reach it in ~740 ticks — within the recovery window.
+            repro_multiplier = rate_repro
+            if getattr(ctx, "recent_rain_recovery_ticks", 0) > 0:
+                repro_multiplier *= RAIN_REPRO_BOOST_MULTIPLIER
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="reproductive_drive",
-                delta=p.repro_drive_build * rate_repro * dt, tick=ctx.tick,
+                delta=p.repro_drive_build * repro_multiplier * dt, tick=ctx.tick,
             ))
         elif sv["hunger"] > REPRO_DECAY_HUNGER or sv["energy"] < REPRO_DECAY_ENERGY:
             effects.append(StateVarDelta(
