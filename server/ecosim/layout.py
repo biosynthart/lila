@@ -33,7 +33,6 @@ from typing import Any
 
 from .entities import init_entity
 
-
 # ── Layout data types ────────────────────────────────────────────────────────
 
 class LayoutResult:

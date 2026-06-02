@@ -28,11 +28,10 @@ from ..constants import (
     POLLINATOR_CROWD_RADIUS,
     POLLINATOR_MAX_PER_FLOWER,
     REPRO_MATE_SEEK_DRIVE,
-    WATER_DRY_THRESHOLD,
     WANDER_RANGE,
+    WATER_DRY_THRESHOLD,
 )
 from ..effects import ClearTarget, Effect, SetTarget
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # MovementActor — Target Selection

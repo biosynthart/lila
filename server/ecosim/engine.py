@@ -94,9 +94,9 @@ from .constants import (
 from .effects import EffectBus
 from .entities import init_entity, is_alive
 from .layout import LayoutManager
+from .model_adapter import MotorAdapter, build_context
 from .movement_system import MovementSystem
 from .spatial_index import SpatialQuery
-from .model_adapter import MotorAdapter, build_context
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
 from .voxel_manager import VoxelManager

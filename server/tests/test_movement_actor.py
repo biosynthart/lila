@@ -11,10 +11,11 @@ effects are returned. No simulation harness needed.
 from __future__ import annotations
 
 import unittest
+from typing import Any
 from unittest.mock import MagicMock
 
 from ecosim.actors.movement_actors import MovementActor
-from ecosim.effects import ClearTarget, EffectType, SetTarget
+from ecosim.effects import ClearTarget, SetTarget
 
 
 def make_movement_context(
@@ -39,7 +40,6 @@ def make_movement_context(
 
     Mimics the FlowContext produced by ConsumerFlowActor._build_movement_context().
     """
-    from typing import Any
 
     pos = position or [5.0, 0.0, 5.0]
     entity = {

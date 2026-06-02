@@ -37,7 +37,6 @@ from typing import Any
 
 from .constants import ACTIVE_MOVEMENT_STATES, ARRIVAL_THRESHOLD
 
-
 # ── Movement System ──────────────────────────────────────────────────────────
 
 class MovementSystem:

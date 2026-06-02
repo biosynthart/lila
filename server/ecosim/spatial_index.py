@@ -24,7 +24,6 @@ from __future__ import annotations
 import math
 from typing import Any, Protocol
 
-
 # ── Canonical distance helper ────────────────────────────────────────────────
 
 def distance_2d(a: list[float], b: list[float]) -> float:

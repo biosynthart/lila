@@ -14,12 +14,11 @@
 
 """Unit tests for the ecosim engine."""
 
+from ecosim.adapters import create_adapter
+from ecosim.biome import get_biome_config
 from ecosim.engine import EcosystemEngine
 from ecosim.entities import init_entity, is_alive, is_mobile
-from ecosim.biome import get_biome_config
 from ecosim.voxel_manager import VoxelManager
-from ecosim.adapters import create_adapter
-
 
 MINIMAL_WORLD = {
     "environment": {
