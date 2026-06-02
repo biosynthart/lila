@@ -574,12 +574,14 @@ class EcosystemEngine:
             total_demand = (sum(n_demand.values())
                            if isinstance(n_demand, dict)
                            else PLANT_DEFAULT_NUTRIENT_DEMAND)
+            footprint_r = params.canopy_radius or 1.0
             effects.append(SoilDrain(
                 tick=self.tick,
                 entity_id=e["id"],
                 position=e["position"],
                 layer="nutrients",
                 amount=-total_demand * dt,
+                radius=footprint_r,
             ))
             base_demand = PLANT_BASE_WATER_DEMAND
             size_factor = 1.0 + (params.canopy_radius or 0.0) * 0.3
@@ -589,6 +591,7 @@ class EcosystemEngine:
                 position=e["position"],
                 layer="moisture",
                 amount=-base_demand * size_factor * dt,
+                radius=footprint_r,
             ))
 
         elif params.diet_type == "decomposer":
@@ -634,14 +637,12 @@ class EcosystemEngine:
 
         Called during engine init after randomization so the footprint
         matches the final (possibly transformed) water source position.
+        Uses ``query_overlap()`` to find all cells within the source radius.
         """
         cx, _, cz = source["position"]
         r = source["radius"]
-        for ix in range(int(cx - r), int(cx + r) + 1):
-            for iz in range(int(cz - r), int(cz + r) + 1):
-                if (ix - cx) ** 2 + (iz - cz) ** 2 <= r * r:
-                    gx, gy, gz = self.voxels.world_to_grid(float(ix), 0.0, float(iz))
-                    self.voxels.set("moisture", gx, gy, gz, 0.95)
+        for gx, gy, gz in self.voxels.query_overlap((cx, 0.0, cz), r):
+            self.voxels.set("moisture", gx, gy, gz, 0.95)
 
     def apply_rain(self, intensity: float = 0.5) -> None:
         """Apply a rain event across the entire grid.
@@ -652,19 +653,21 @@ class EcosystemEngine:
         """
         dims = self.voxels.dimensions
 
-        # Soil moisture boost
-        for x in range(dims[0]):
-            for z in range(dims[2]):
-                current = self.voxels.get("moisture", x, 0, z)
-                self.voxels.set("moisture", x, 0, z,
-                                min(1.0, current + RAIN_MOISTURE_BOOST * intensity))
+        # Soil moisture boost (walk_layer skips empty regions)
+        self.voxels.walk_layer(
+            "moisture",
+            lambda x, y, z, val: self.voxels.set(
+                "moisture", x, y, z,
+                min(1.0, val + RAIN_MOISTURE_BOOST * intensity)),
+        )
 
         # Soil nutrient boost (dissolved minerals in rainwater)
-        for x in range(dims[0]):
-            for z in range(dims[2]):
-                current = self.voxels.get("nutrients", x, 0, z)
-                self.voxels.set("nutrients", x, 0, z,
-                                min(1.0, current + RAIN_NUTRIENT_BOOST * intensity))
+        self.voxels.walk_layer(
+            "nutrients",
+            lambda x, y, z, val: self.voxels.set(
+                "nutrients", x, y, z,
+                min(1.0, val + RAIN_NUTRIENT_BOOST * intensity)),
+        )
 
         # Water source refill
         for source in self.water_sources:
