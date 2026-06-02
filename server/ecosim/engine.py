@@ -195,15 +195,13 @@ class EcosystemEngine:
         self._spawns: list[dict[str, Any]] = []
         self._removals: list[str] = []
 
-        # ── Effect bus (Phase 1 refactoring) ──
+        # ── Effect bus ──
         self.effect_bus = EffectBus()
 
-        # ── Actor registries (Phase 1 + Phase 2 refactoring) ──
+        # ── Actor registries ──
         self.actor_registry = build_interaction_registry(self.compiled)
         self.flow_actor_registry = build_flow_registry(self.compiled)
         self.guard_actor_registry = build_guard_registry(self.compiled)
-
-
 
     # ───────────────────────────────────────────────────────────────────────
     # Param Lookup
@@ -488,8 +486,6 @@ class EcosystemEngine:
             _get_params=self._get_params,  # for querying other entities' traits
         )
 
-
-
     # ═══════════════════════════════════════════════════════════════════════
     def _apply_voxel_effects(self, e: dict[str, Any], dt: float) -> None:
         """Apply entity-driven changes to the voxel soil grid.
@@ -568,8 +564,6 @@ class EcosystemEngine:
                 if current > SOIL_MOISTURE_FLOOR:
                     self.voxels.set("moisture", x, 0, z,
                                     max(SOIL_MOISTURE_FLOOR, current - evap))
-
-
 
     def _replenish_water_sources(self, dt: float) -> None:
         """Evaporate and replenish water sources; update soil moisture footprint."""
@@ -679,24 +673,6 @@ class EcosystemEngine:
         latents = adapter.infer(contexts)
         for entity, latent in zip(skeleton_entities, latents):
             entity["motion_latent"] = latent
-
-
-
-
-
-
-
-    def _emit_state_change(self, entity: dict, old_state: str, new_state: str) -> None:
-        self._events.append({
-            "type": "STATE_CHANGE", "tick": self.tick,
-            "source_id": entity["id"], "target_id": None,
-            "position": list(entity["position"]),
-            "prev_state": old_state, "new_state": new_state,
-        })
-
-    def _schedule_removal(self, entity: dict) -> None:
-        if entity["id"] not in self._removals:
-            self._removals.append(entity["id"])
 
     # ═══════════════════════════════════════════════════════════════════════
     # Tick Packet Assembly
