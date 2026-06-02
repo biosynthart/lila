@@ -10,20 +10,17 @@ No simulation harness needed.
 
 from __future__ import annotations
 
-import math
 import unittest
 from unittest.mock import MagicMock
 
 from ecosim.actors.reproduction_actor import ReproductionActor
 from ecosim.effects import (
-    EffectType,
     EventRecord,
     SetStateVar,
     SpawnEntity,
     StateTransition,
     StateVarDelta,
 )
-
 
 # ────────────────────────────────────────────────────────────────────────────
 # Helpers — build mock contexts for animal and plant reproduction tests
@@ -385,10 +382,10 @@ class TestReproductionActorPlant(unittest.TestCase):
         )
 
         effects = self.actor.resolve_plant(ctx, ctx.entity["state_vars"], ctx.params, 0.1)
-        spawns = [e for e in effects if isinstance(e, SpawnEntity)]
-        # May or may not spawn depending on random spread position — 
-        # but with a nearby autotroph at (15.5, 15.5), many positions will be blocked
+        # May or may not spawn depending on random spread position —
+        # but with a nearby autotroph at (15.5, 15.5), many positions will be blocked.
         # We can't guarantee no spawn due to randomness, so just check it doesn't crash
+        self.assertIsInstance(effects, list)
 
 
 class TestReproductionActorInsect(unittest.TestCase):

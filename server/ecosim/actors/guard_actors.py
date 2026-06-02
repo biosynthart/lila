@@ -30,9 +30,7 @@ from ..effects import (
     SetEntityAttr,
     SetStateVar,
     StateTransition,
-    StateVarDelta,
 )
-from ..entities import is_alive
 
 
 class ConsumerGuardActor:
