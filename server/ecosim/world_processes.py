@@ -17,9 +17,18 @@ See Also:
 
 from __future__ import annotations
 
-from typing import TYPE_CHECKING
+from typing import TYPE_CHECKING, Any
 
 from .constants import (
+    OM_DEPOSIT_MAX,
+    OM_DEPOSIT_MIN,
+    OM_DEPOSIT_SCALE,
+    RAIN_ANIMAL_HYDRATION,
+    RAIN_MOISTURE_BOOST,
+    RAIN_NUTRIENT_BOOST,
+    RAIN_PLANT_HEALTH,
+    RAIN_PLANT_HYDRATION,
+    RAIN_WATER_SOURCE_BOOST,
     SOIL_MOISTURE_FLOOR,
     WATER_SOURCE_MOISTURE_TARGET,
 )
@@ -194,6 +203,134 @@ class SoilDepositHandler(WorldProcessHandler):
                 *deposit_effect.position)
             ctx.voxel_grid.add(
                 deposit_effect.layer, gx, gy, gz, deposit_effect.amount)
+
+
+# ═══════════════════════════════════════════════════════════════════════════════
+# Standalone World-Process Functions
+# ═══════════════════════════════════════════════════════════════════════════════
+
+def deposit_organic_matter(
+    entity: dict,
+    params: dict | None,
+    voxel_grid: Any,  # VoxelManager — avoid circular import
+) -> None:
+    """Deposit entity biomass into the organic matter voxel layer on death.
+
+    Args:
+        entity: Entity dict with position and metadata.
+        params: DerivedParams or dict with metabolic_rate (or None).
+        voxel_grid: VoxelManager for grid operations.
+    """
+    gx, gy, gz = voxel_grid.world_to_grid(*entity["position"])
+    if params is not None:
+        mr = getattr(params, "metabolic_rate", None) or (
+            params.get("metabolic_rate") if isinstance(params, dict) else None
+        )
+        if mr is not None:
+            deposit = min(OM_DEPOSIT_MAX, mr * OM_DEPOSIT_SCALE)
+            deposit = max(deposit, OM_DEPOSIT_MIN)
+        else:
+            mass = entity.get("metadata", {}).get("body_mass", 10.0)
+            deposit = min(0.3, mass / 500.0)
+    else:
+        mass = entity.get("metadata", {}).get("body_mass", 10.0)
+        deposit = min(0.3, mass / 500.0)
+    voxel_grid.add("organic_matter", gx, gy, gz, deposit)
+
+
+def init_water_source_moisture(
+    source: dict,
+    voxel_grid: Any,  # VoxelManager — avoid circular import
+) -> None:
+    """Initialize soil moisture footprint around a water source.
+
+    Called during engine init after randomization so the footprint matches
+    the final (possibly transformed) water source position. Uses
+    ``query_overlap()`` to find all cells within the source radius.
+
+    Args:
+        source: Water source dict with position and radius.
+        voxel_grid: VoxelManager for grid operations.
+    """
+    cx, _, cz = source["position"]
+    r = source["radius"]
+    for gx, gy, gz in voxel_grid.query_overlap((cx, 0.0, cz), r):
+        voxel_grid.set("moisture", gx, gy, gz, 0.95)
+
+
+def apply_rain_effects(
+    intensity: float,
+    voxel_grid: Any,
+    water_sources: list[dict],
+    entities: dict[str, dict],
+    get_params_fn: Any | None,
+) -> dict:
+    """Apply a rain event across the entire grid.
+
+    Boosts soil moisture and nutrients, refills water sources, and hydrates
+    plants and animals. Returns an event record dict for the caller to append.
+
+    Args:
+        intensity: Rain intensity (0.0–1.0).
+        voxel_grid: VoxelManager for grid operations.
+        water_sources: List of water source dicts.
+        entities: Entity registry dict.
+        get_params_fn: Callable(entity) → DerivedParams | None.
+
+    Returns:
+        Event record dict with type, intensity, and position.
+    """
+    from .entities import is_alive  # avoid circular import at module level
+
+    dims = voxel_grid.dimensions
+
+    # Soil moisture boost (walk_layer skips empty regions)
+    voxel_grid.walk_layer(
+        "moisture",
+        lambda x, y, z, val: voxel_grid.set(
+            "moisture", x, y, z,
+            min(1.0, val + RAIN_MOISTURE_BOOST * intensity)),
+    )
+
+    # Soil nutrient boost (dissolved minerals in rainwater)
+    voxel_grid.walk_layer(
+        "nutrients",
+        lambda x, y, z, val: voxel_grid.set(
+            "nutrients", x, y, z,
+            min(1.0, val + RAIN_NUTRIENT_BOOST * intensity)),
+    )
+
+    # Water source refill
+    for source in water_sources:
+        source["water_level"] = min(
+            1.0, source["water_level"] + RAIN_WATER_SOURCE_BOOST * intensity)
+        source["radius"] = source["max_radius"] * source["water_level"]
+
+    # Direct entity hydration/health boost
+    for ent in entities.values():
+        if not is_alive(ent):
+            continue
+        sv = ent["state_vars"]
+        params = get_params_fn(ent) if get_params_fn else None
+        if params and getattr(params, "diet_type", "") == "autotroph":
+            sv["hydration"] = min(1.0, sv["hydration"] + RAIN_PLANT_HYDRATION * intensity)
+            sv["health"] = min(1.0, sv["health"] + RAIN_PLANT_HEALTH * intensity)
+        elif params and getattr(params, "speed", 0) > 0:
+            if "hydration" in sv:
+                # Scale boost inversely with current hydration: critically
+                # dehydrated animals get up to 2× the base, well-hydrated
+                # ones get only half. This prevents post-collapse death
+                # spirals where a single rain event can't save them.
+                current = sv["hydration"]
+                scale = max(0.5, min(2.0, 1.0 + (1.0 - current)))
+                sv["hydration"] = min(
+                    1.0, current + RAIN_ANIMAL_HYDRATION * intensity * scale)
+
+    return {
+        "type": "RAIN",
+        "intensity": intensity,
+        "position": [dims[0] / 2, 0.0, dims[2] / 2],
+    }
 
 
 # ═══════════════════════════════════════════════════════════════════════════════

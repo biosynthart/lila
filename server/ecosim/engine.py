@@ -70,19 +70,10 @@ from .actors import (
 from .biome import BiomeConfig, get_biome_config
 from .constants import (
     DECOMP_NUTRIENT_EFFICIENCY,
-    OM_DEPOSIT_MAX,
-    OM_DEPOSIT_MIN,
-    OM_DEPOSIT_SCALE,
     PLANT_BASE_WATER_DEMAND,
     PLANT_DEFAULT_NUTRIENT_DEMAND,
-    RAIN_ANIMAL_HYDRATION,
-    RAIN_MOISTURE_BOOST,
-    RAIN_NUTRIENT_BOOST,
-    RAIN_PLANT_HEALTH,
-    RAIN_PLANT_HYDRATION,
     RAIN_REPRO_RECOVERY_TICKS,
     RAIN_SUPPRESSION_TICKS,
-    RAIN_WATER_SOURCE_BOOST,
     SOIL_EVAP_BASE_RATE,
     SOIL_EVAP_HUMIDITY_FACTOR,
     SOIL_EVAP_TEMP_SCALE,
@@ -106,7 +97,12 @@ from .spatial_index import SpatialQuery
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
 from .voxel_manager import VoxelManager
-from .world_processes import register_default_world_handlers
+from .world_processes import (
+    apply_rain_effects,
+    deposit_organic_matter,
+    init_water_source_moisture,
+    register_default_world_handlers,
+)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Engine
@@ -182,7 +178,7 @@ class EcosystemEngine:
 
         # ── Seed water source moisture footprints (after randomization) ──
         for source in self.water_sources:
-            self._init_water_source_moisture(source)
+            init_water_source_moisture(source, self.voxels)
 
         # ── Movement system (gate + kinematics for mobile entities) ──
         self._movement = MovementSystem(self._grid_max)
@@ -348,7 +344,7 @@ class EcosystemEngine:
             self._spawns,
             self._removals,
             self._events,
-            deposit_fn=self._deposit_organic_matter,
+            deposit_fn=lambda e, p: deposit_organic_matter(e, p, self.voxels),
         )
 
         # Phase 4: Voxel effects — entity impact on soil (effect-based)
@@ -612,38 +608,6 @@ class EcosystemEngine:
                 amount=rate * DECOMP_NUTRIENT_EFFICIENCY,
             ))
 
-    def _deposit_organic_matter(self, e: dict, p: DerivedParams | dict | None) -> None:
-        """Deposit entity biomass into the organic matter voxel layer on death."""
-        gx, gy, gz = self.voxels.world_to_grid(*e["position"])
-        if p is not None:
-            mr = getattr(p, "metabolic_rate", None) or (p.get("metabolic_rate") if isinstance(p, dict) else None)
-            if mr is not None:
-                deposit = min(OM_DEPOSIT_MAX, mr * OM_DEPOSIT_SCALE)
-                deposit = max(deposit, OM_DEPOSIT_MIN)
-            else:
-                mass = e.get("metadata", {}).get("body_mass", 10.0)
-                deposit = min(0.3, mass / 500.0)
-        else:
-            mass = e.get("metadata", {}).get("body_mass", 10.0)
-            deposit = min(0.3, mass / 500.0)
-        self.voxels.add("organic_matter", gx, gy, gz, deposit)
-
-    # ═══════════════════════════════════════════════════════════════════════
-    # Water Source Initialization
-    # ═══════════════════════════════════════════════════════════════════════
-
-    def _init_water_source_moisture(self, source: dict[str, Any]) -> None:
-        """Initialize soil moisture footprint around a water source.
-
-        Called during engine init after randomization so the footprint
-        matches the final (possibly transformed) water source position.
-        Uses ``query_overlap()`` to find all cells within the source radius.
-        """
-        cx, _, cz = source["position"]
-        r = source["radius"]
-        for gx, gy, gz in self.voxels.query_overlap((cx, 0.0, cz), r):
-            self.voxels.set("moisture", gx, gy, gz, 0.95)
-
     def apply_rain(self, intensity: float = 0.5) -> None:
         """Apply a rain event across the entire grid.
 
@@ -651,62 +615,19 @@ class EcosystemEngine:
         hydrates plants and animals, and suppresses evaporation.
         Triggered via WebSocket control message or programmatic API.
         """
-        dims = self.voxels.dimensions
-
-        # Soil moisture boost (walk_layer skips empty regions)
-        self.voxels.walk_layer(
-            "moisture",
-            lambda x, y, z, val: self.voxels.set(
-                "moisture", x, y, z,
-                min(1.0, val + RAIN_MOISTURE_BOOST * intensity)),
+        # Delegate core effects to world_processes (soil, water, entities)
+        event = apply_rain_effects(
+            intensity=intensity,
+            voxel_grid=self.voxels,
+            water_sources=self.water_sources,
+            entities=self.entities,
+            get_params_fn=self._get_params,
         )
 
-        # Soil nutrient boost (dissolved minerals in rainwater)
-        self.voxels.walk_layer(
-            "nutrients",
-            lambda x, y, z, val: self.voxels.set(
-                "nutrients", x, y, z,
-                min(1.0, val + RAIN_NUTRIENT_BOOST * intensity)),
-        )
-
-        # Water source refill
-        for source in self.water_sources:
-            source["water_level"] = min(
-                1.0, source["water_level"] + RAIN_WATER_SOURCE_BOOST * intensity)
-            source["radius"] = source["max_radius"] * source["water_level"]
-
-        # Suppress evaporation
+        # Engine-level bookkeeping (tick counters, event log)
         self._rain_ticks_remaining = RAIN_SUPPRESSION_TICKS
-
-        # Start post-rain reproduction recovery window: surviving animals get
-        # a temporary boost to reproductive drive build so populations can
-        # recover before individuals die of old age/starvation.
         self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
-
-        # Direct entity hydration/health boost
-        for ent in self.entities.values():
-            if not is_alive(ent):
-                continue
-            sv = ent["state_vars"]
-            params = self._get_params(ent)
-            if params and params.diet_type == "autotroph":
-                sv["hydration"] = min(1.0, sv["hydration"] + RAIN_PLANT_HYDRATION * intensity)
-                sv["health"] = min(1.0, sv["health"] + RAIN_PLANT_HEALTH * intensity)
-            elif params and params.speed > 0:
-                if "hydration" in sv:
-                    # Scale boost inversely with current hydration: critically
-                    # dehydrated animals get up to 2× the base, well-hydrated
-                    # ones get only half. This prevents post-collapse death
-                    # spirals where a single rain event can't save them.
-                    current = sv["hydration"]
-                    scale = max(0.5, min(2.0, 1.0 + (1.0 - current)))
-                    sv["hydration"] = min(
-                        1.0, current + RAIN_ANIMAL_HYDRATION * intensity * scale)
-
-        self._events.append({
-            "type": "RAIN", "tick": self.tick, "intensity": intensity,
-            "position": [dims[0] / 2, 0.0, dims[2] / 2],
-        })
+        self._events.append({"type": "RAIN", "tick": self.tick, **event})
 
     # ═══════════════════════════════════════════════════════════════════════
     # Phase 6: Motor Inference (BYOM)
