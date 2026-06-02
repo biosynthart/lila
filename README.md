@@ -251,11 +251,15 @@ lila/
 │   │   ├── constants.py     # Universal simulation constants (single source of truth)
 │   │   ├── model_adapter.py # BYOM protocol
 │   │   ├── effects.py       # Effect dataclasses + EffectBus (immutable effect pipeline)
-│   │   ├── actors/          # Actor system (flow, guard, interaction actors)
+│   │   ├── actors/          # Actor system (flow, guard, interaction, movement)
 │   │   │   ├── __init__.py  # InteractionContext, FlowActor/GuardActor bases, registries
-│   │   │   ├── flow_actors.py    # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor
+│   │   │   ├── flow_actors.py    # ConsumerFlowActor, ProducerFlowActor, DecomposerFlowActor (+ MovementActor integration)
 │   │   │   ├── guard_actors.py   # ConsumerGuardActor, ProducerGuardActor, DecomposerGuardActor
-│   │   │   └── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
+│   │   │   ├── interaction_actors.py  # FleeActor, PredationActor, HerbivoryActor, PollinationActor
+│   │   │   └── movement_actors.py  # MovementActor — target selection as effect-emitting actor
+│   │   ├── layout.py        # LayoutManager — world loading, D4 transforms, randomization
+│   │   ├── spatial_index.py # SpatialIndex protocol + BruteForceSpatialIndex (neighbor queries)
+│   │   ├── movement_system.py  # MovementSystem — gate policy + kinematics for mobile entities
 │   │   ├── worker.py        # WebSocket server
 │   │   └── adapters/        # Built-in motor models
 │   ├── examples/            # Demo world definitions
@@ -294,6 +298,21 @@ and clean separation of concerns.
 The engine uses a **dual-path architecture**: trait-based worlds use the actor
 system; legacy worlds (without `species_definitions`) fall back to inline logic.
 This ensures backward compatibility with all existing world files.
+
+### Extracted subsystems
+
+The monolithic engine has been decomposed into focused modules:
+- **LayoutManager** (`layout.py`) — entity initialization, water source parsing,
+  grid bounds calculation, and the full randomization pipeline (D4 transforms,
+  jitter, extra spawns, push-from-water)
+- **SpatialIndex** (`spatial_index.py`) — neighbor queries via a strategy interface
+  (current: BruteForceSpatialIndex; pluggable for future spatial hash swap)
+- **MovementSystem** (`movement_system.py`) — movement gate policy (linger/cooldown
+decrements, ACTIVE_MOVEMENT_STATES check, pollinator exception) and kinematics
+(move toward target at species speed, clamp to grid, clear on arrival)
+- **MovementActor** (`actors/movement_actors.py`) — target selection as a pure-function
+  actor emitting SetTarget/ClearTarget effects (priority: swarming → drinking →
+  mate-seeking → foraging → hunting → idle pollinator → wander)
 
 ## Background
 
@@ -361,7 +380,9 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - Interaction templates — herbivory, predation, pollination, decomposition (parameterized, no per-species code)
 - Trait compiler — runs once at init, produces DerivedParams + interaction matrix for the engine
 - 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
-- Actor effects architecture — immutable EffectBus with flow/guard/interaction actors
+- Actor effects architecture — immutable EffectBus with flow/guard/interaction/movement actors
+- MovementActor — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects
+- Engine decomposition — LayoutManager (world loading + randomization), SpatialIndex (neighbor queries via strategy interface), MovementSystem (gate policy + kinematics)
 - Universal constants module (`constants.py`) — single source of truth for all simulation physics
 - Pollinator dispersal mechanics — per-flower caps, visit limits, wander cooldowns, post-visit cooldowns
 - ASAL substrate protocol — Init(θ)/Step(θ)/Render(θ) wrapping ecosim
@@ -371,6 +392,7 @@ The actor system extracts entity↔entity interactions into pure functions that 
 
 **Near-term:**
 - Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition) — *next*
+- Spatial hash for O(1) neighbor queries (SpatialIndex strategy swap)
 - Calibration & regression testing (2000-tick baseline comparison)
 - Emergent dynamics validation with 8 species (trophic cascades, Lotka-Volterra oscillations)
 - Trait-based search — θ encodes organism traits, not just rate multipliers
