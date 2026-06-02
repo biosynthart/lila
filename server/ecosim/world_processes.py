@@ -179,7 +179,7 @@ class SoilDepositHandler(WorldProcessHandler):
 # Registration Helper
 # ═══════════════════════════════════════════════════════════════════════════════
 
-def register_default_world_handlers(bus: "EffectBus") -> None:  # noqa: F821
+def register_default_world_handlers(bus: EffectBus) -> None:  # noqa: F821
     """Register all default world-process handlers on an EffectBus.
 
     Call this from EcosystemEngine.__init__ after creating the bus.

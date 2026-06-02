@@ -19,10 +19,9 @@ See Also:
 
 from __future__ import annotations
 
-import math
 from dataclasses import asdict, dataclass, field
 from enum import StrEnum
-from typing import TYPE_CHECKING, Any, Callable, Protocol, runtime_checkable
+from typing import TYPE_CHECKING, Any, Protocol, runtime_checkable
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Effect Types

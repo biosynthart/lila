@@ -98,7 +98,6 @@ from .effects import (
     WaterReplenish,
     WorldProcessContext,
 )
-from .world_processes import register_default_world_handlers
 from .entities import init_entity, is_alive
 from .layout import LayoutManager
 from .model_adapter import MotorAdapter, build_context
@@ -107,6 +106,7 @@ from .spatial_index import SpatialQuery
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
 from .voxel_manager import VoxelManager
+from .world_processes import register_default_world_handlers
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Engine
