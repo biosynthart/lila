@@ -18,7 +18,7 @@
 
 `līlā` is an open-source engine that grows autonomous ecosystems from simple rules. You define species, biomes, and resources — the engine handles hunger cycles, predator-prey loops, soil nutrient flows, water depletion, dormancy, and recovery. Organisms don't follow scripts; their behavior emerges from continuous state variables, hybrid automata guards, and environmental feedback.
 
-> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand) for the full argument.
+> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://hellolifeforms.substack.com/p/the-unseen-hand) for the full argument.
 
 ### Built for
 
