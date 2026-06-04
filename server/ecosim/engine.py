@@ -67,7 +67,6 @@ from .actors import (
     build_guard_registry,
     build_interaction_registry,
 )
-from .biome import BiomeConfig, get_biome_config
 from .constants import (
     DECOMP_NUTRIENT_EFFICIENCY,
     PLANT_BASE_WATER_DEMAND,
@@ -90,17 +89,14 @@ from .effects import (
     WorldProcessContext,
 )
 from .entities import init_entity, is_alive
-from .layout import LayoutManager
+from .environment_manager import EnvironmentManager
 from .model_adapter import MotorAdapter, build_context
 from .movement_system import MovementSystem
 from .spatial_index import SpatialQuery
 from .trait_compiler import CompiledEcology, compile_world
 from .traits import DerivedParams
-from .voxel_manager import VoxelManager
 from .world_processes import (
-    apply_rain_effects,
     deposit_organic_matter,
-    init_water_source_moisture,
     register_default_world_handlers,
 )
 
@@ -132,25 +128,18 @@ class EcosystemEngine:
         world_config: dict[str, Any],
         adapters: dict[str, Any] | None = None,
     ):
-        # ── Environment setup ──
-        env = world_config["environment"]
-        self.biome_name: str = env.get("biome", "TEMPERATE")
-        self.biome: BiomeConfig = get_biome_config(self.biome_name)
-        self.climate: dict[str, float] = dict(env.get("climate", {}))
-
-        # ── Voxel grid (soil layers: nutrients, moisture, temperature, OM) ──
-        grid_cfg = env.get("voxel_grid", {})
-        dims = tuple(grid_cfg.get("dimensions", [32, 32, 32]))
-        cell = grid_cfg.get("cell_size", 1.0)
-        self.voxels = VoxelManager(dimensions=dims, cell_size=cell)
-
-        soil = env.get("soil", {})
-        if soil:
-            self.voxels.initialize_from_soil(soil)
+        # ── Environment setup (wrapped in EnvironmentManager) ──
+        env_cfg = world_config["environment"]
+        self.env = EnvironmentManager(
+            biome_name=env_cfg.get("biome", "TEMPERATE"),
+            climate=dict(env_cfg.get("climate", {})),
+            voxel_grid_cfg=env_cfg.get("voxel_grid", {}),
+            soil_cfg=env_cfg.get("soil")
+        )
 
         # ── Trait compilation ──
         # Converts species_definitions into DerivedParams + interaction matrix.
-        biome_dict = {"name": self.biome_name}
+        biome_dict = {"name": self.env.biome_name}
         self.compiled: CompiledEcology = compile_world(world_config, biome_dict)
 
         self.tick: int = 0
@@ -169,16 +158,9 @@ class EcosystemEngine:
             self._motor_adapter = StaticMotorAdapter()
 
         # ── Layout loading (entities + water sources + randomization) ──
-        layout = LayoutManager(world_config, self.voxels)
-        result = layout.load()
+        result = self.env.load_layout(world_config)
         self.entities: dict[str, dict[str, Any]] = result.entities
-        self.water_sources: list[dict[str, Any]] = result.water_sources
         self._grid_max: float = result.grid_max
-        layout.randomize(self.entities, self.water_sources)
-
-        # ── Seed water source moisture footprints (after randomization) ──
-        for source in self.water_sources:
-            init_water_source_moisture(source, self.voxels)
 
         # ── Movement system (gate + kinematics for mobile entities) ──
         self._movement = MovementSystem(self._grid_max)
@@ -210,6 +192,30 @@ class EcosystemEngine:
         self.actor_registry = build_interaction_registry(self.compiled)
         self.flow_actor_registry = build_flow_registry(self.compiled)
         self.guard_actor_registry = build_guard_registry(self.compiled)
+
+    # ───────────────────────────────────────────────────────────────────────
+    # Environment Properties (backward compatibility)
+    # ───────────────────────────────────────────────────────────────────────
+
+    @property
+    def biome(self):
+        return self.env.biome
+
+    @property
+    def biome_name(self):
+        return self.env.biome_name
+
+    @property
+    def climate(self):
+        return self.env.climate
+
+    @property
+    def voxels(self):
+        return self.env.voxels
+
+    @property
+    def water_sources(self):
+        return self.env.water_sources
 
     # ───────────────────────────────────────────────────────────────────────
     # Param Lookup
@@ -291,7 +297,7 @@ class EcosystemEngine:
         self.effect_bus.apply_flow_batch(
             flow_effects,
             self.entities,
-            self.voxels,
+            self.env.voxels,
         )
 
         # Movement — move consumers toward targets after state vars are updated
@@ -320,7 +326,7 @@ class EcosystemEngine:
         self.effect_bus.apply_batch(
             interaction_effects,
             self.entities,
-            self.voxels,
+            self.env.voxels,
             self._spawns,
             self._removals,
             self._events,
@@ -340,11 +346,11 @@ class EcosystemEngine:
         self.effect_bus.apply_effects_with_om_deposit(
             guard_effects,
             self.entities,
-            self.voxels,
+            self.env.voxels,
             self._spawns,
             self._removals,
             self._events,
-            deposit_fn=lambda e, p: deposit_organic_matter(e, p, self.voxels),
+            deposit_fn=lambda e, p: deposit_organic_matter(e, p, self.env.voxels),
         )
 
         # Phase 4: Voxel effects — entity impact on soil (effect-based)
@@ -354,11 +360,11 @@ class EcosystemEngine:
                 self._build_voxel_effects(entity, dt, voxel_effects)
         world_ctx = WorldProcessContext(
             tick=self.tick,
-            voxel_grid=self.voxels,
-            biome=self.biome,
-            climate=self.climate,
+            voxel_grid=self.env.voxels,
+            biome=self.env.biome,
+            climate=self.env.climate,
             entities=self.entities,
-            water_sources=self.water_sources,
+            water_sources=self.env.water_sources,
             rate_multipliers={
                 "consumption": self.rate_consumption,
                 "hunger": self.rate_hunger,
@@ -386,17 +392,17 @@ class EcosystemEngine:
                 tick=self.tick,
                 evap_rate=(
                     SOIL_EVAP_BASE_RATE
-                    * (self.climate.get("temperature", 20.0) / SOIL_EVAP_TEMP_SCALE)
-                    * (1.0 - self.climate.get("humidity", 0.5) * SOIL_EVAP_HUMIDITY_FACTOR)
+                    * (self.env.climate.get("temperature", 20.0) / SOIL_EVAP_TEMP_SCALE)
+                    * (1.0 - self.env.climate.get("humidity", 0.5) * SOIL_EVAP_HUMIDITY_FACTOR)
                     * self.rate_thirst * dt
                 ),
                 rain_suppressed=rain_suppressed,
             ),
         ]
-        if self.water_sources:
+        if self.env.water_sources:
             world_effects.append(WaterReplenish(
                 tick=self.tick,
-                sources=self.water_sources,
+                sources=self.env.water_sources,
                 evap_loss=WATER_EVAPORATION_RATE * self.rate_thirst * dt,
                 replenish_gain=WATER_REPLENISH_RATE * self.rate_water_replenish * dt,
                 soil_refill_rate=WATER_REFILL_RATE * self.rate_water_replenish * dt,
@@ -438,13 +444,13 @@ class EcosystemEngine:
             return InteractionContext(
                 tick=self.tick,
                 entity=entity,
-                voxel_grid=self.voxels,
-                biome=self.biome,
+                voxel_grid=self.env.voxels,
+                biome=self.env.biome,
                 compiled=self.compiled,
                 params=None,
                 nearby_entities=[],
-                water_sources=self.water_sources,
-                climate=self.climate,
+                water_sources=self.env.water_sources,
+                climate=self.env.climate,
                 rate_multipliers=rate_multipliers,
             )
 
@@ -465,13 +471,13 @@ class EcosystemEngine:
         return InteractionContext(
             tick=self.tick,
             entity=entity,
-            voxel_grid=self.voxels,
-            biome=self.biome,
+            voxel_grid=self.env.voxels,
+            biome=self.env.biome,
             compiled=self.compiled,
             params=params,
             nearby_entities=nearby,
-            water_sources=self.water_sources,
-            climate=self.climate,
+            water_sources=self.env.water_sources,
+            climate=self.env.climate,
             rate_multipliers=rate_multipliers,
         )
 
@@ -497,13 +503,13 @@ class EcosystemEngine:
         return FlowContext(
             tick=self.tick,
             entity=entity,
-            voxel_grid=self.voxels,
-            biome=self.biome,
+            voxel_grid=self.env.voxels,
+            biome=self.env.biome,
             compiled=self.compiled,
             params=params,
             nearby_entities=[],  # flow actors don't need spatial queries
-            water_sources=self.water_sources,
-            climate=self.climate,
+            water_sources=self.env.water_sources,
+            climate=self.env.climate,
             rate_multipliers=rate_multipliers,
             dt=dt,
             rain_ticks_remaining=self._rain_ticks_remaining,
@@ -531,13 +537,13 @@ class EcosystemEngine:
         return GuardContext(
             tick=self.tick,
             entity=entity,
-            voxel_grid=self.voxels,
-            biome=self.biome,
+            voxel_grid=self.env.voxels,
+            biome=self.env.biome,
             compiled=self.compiled,
             params=params,
             nearby_entities=[],
-            water_sources=self.water_sources,
-            climate=self.climate,
+            water_sources=self.env.water_sources,
+            climate=self.env.climate,
             rate_multipliers=rate_multipliers,
             _entities=self.entities,
             _get_params=self._get_params,  # for querying other entities' traits
@@ -592,7 +598,7 @@ class EcosystemEngine:
 
         elif params.diet_type == "decomposer":
             activity = e["state_vars"].get("activity", 0)
-            rate = self.biome.decomposition_rate * activity * dt
+            rate = self.env.biome.decomposition_rate * activity * dt
             effects.append(SoilDeposit(
                 tick=self.tick,
                 entity_id=e["id"],
@@ -615,13 +621,20 @@ class EcosystemEngine:
         hydrates plants and animals, and suppresses evaporation.
         Triggered via WebSocket control message or programmatic API.
         """
-        # Delegate core effects to world_processes (soil, water, entities)
-        event = apply_rain_effects(
+        # Delegate core effects to EnvironmentManager
+        rate_multipliers = {
+            "consumption": self.rate_consumption,
+            "hunger": self.rate_hunger,
+            "thirst": self.rate_thirst,
+            "growth": self.rate_growth,
+            "reproduction": self.rate_reproduction,
+            "water_replenishment": self.rate_water_replenish,
+        }
+        event = self.env.apply_rain(
             intensity=intensity,
-            voxel_grid=self.voxels,
-            water_sources=self.water_sources,
             entities=self.entities,
             get_params_fn=self._get_params,
+            rate_multipliers=rate_multipliers,
         )
 
         # Engine-level bookkeeping (tick counters, event log)
@@ -651,7 +664,7 @@ class EcosystemEngine:
         for entity in skeleton_entities:
             spec = (adapter.context_spec_for(entity["type"])
                     if has_type_specs else adapter.context_spec())
-            ctx = build_context(spec, entity, self.biome, self.climate)
+            ctx = build_context(spec, entity, self.env.biome, self.env.climate)
             contexts.append(ctx)
         latents = adapter.infer(contexts)
         for entity, latent in zip(skeleton_entities, latents):
@@ -689,15 +702,13 @@ class EcosystemEngine:
             packet["entity_removals"] = list(self._removals)
         if self._events:
             packet["events"] = self._events
-        voxel_packet = self.voxels.get_delta_packet()
+        voxel_packet = self.env.voxels.get_delta_packet()
         if voxel_packet:
             packet["voxel_deltas"] = voxel_packet
-        if self.water_sources:
+        if self.env.water_sources:
             packet["water_sources"] = [
                 {"position": ws["position"], "radius": ws["radius"],
                  "water_level": ws["water_level"]}
-                for ws in self.water_sources
+                for ws in self.env.water_sources
             ]
         return packet
-
-
