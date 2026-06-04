@@ -26,6 +26,7 @@ from .constants import (
     RAIN_PLANT_HYDRATION,
     RAIN_WATER_SOURCE_BOOST,
 )
+from .layout import LayoutManager, LayoutResult
 from .voxel_manager import VoxelManager
 
 
@@ -63,12 +64,47 @@ class EnvironmentManager:
         # ── Water Sources ──
         self.water_sources: list[dict] = []
 
+    def load_layout(self, world_config: dict[str, Any]) -> LayoutResult:
+        """Load entities and water sources from world config into this environment.
+
+        Internally constructs a LayoutManager to parse the world JSON,
+        applies optional randomization, seeds moisture footprints around
+        water sources, and returns the result. The engine calls this once
+        at init; it owns both entity placement and environment population.
+
+        Args:
+            world_config: World definition dict (from JSON). Must contain
+                ``environment`` and optionally ``entities``.
+
+        Returns:
+            LayoutResult with initialized entities, water sources,
+            and grid_max. Water sources are also stored on this manager.
+        """
+        layout = LayoutManager(world_config, self.voxels)
+        result = layout.load()
+
+        # Owner sets its own state — no back-mutation from the engine
+        self.water_sources = result.water_sources
+
+        # Apply optional randomization (mutates entities + water sources in-place)
+        layout.randomize(result.entities, self.water_sources)
+
+        # Seed moisture footprints after randomization (positions may have shifted)
+        for source in self.water_sources:
+            self._init_water_source_moisture(source)
+
+        return LayoutResult(
+            result.entities,
+            self.water_sources,
+            result.grid_max,
+        )
+
     def add_water_source(self, source: dict) -> None:
         """Registers a water source and initializes its moisture footprint."""
         self.water_sources.append(source)
-        self.init_water_source_moisture(source)
+        self._init_water_source_moisture(source)
 
-    def init_water_source_moisture(self, source: dict) -> None:
+    def _init_water_source_moisture(self, source: dict) -> None:
         """Initialize soil moisture footprint around a water source.
 
         Uses ``query_overlap()`` to find all cells within the source radius

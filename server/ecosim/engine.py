@@ -90,7 +90,6 @@ from .effects import (
 )
 from .entities import init_entity, is_alive
 from .environment_manager import EnvironmentManager
-from .layout import LayoutManager
 from .model_adapter import MotorAdapter, build_context
 from .movement_system import MovementSystem
 from .spatial_index import SpatialQuery
@@ -159,16 +158,9 @@ class EcosystemEngine:
             self._motor_adapter = StaticMotorAdapter()
 
         # ── Layout loading (entities + water sources + randomization) ──
-        layout = LayoutManager(world_config, self.env.voxels)
-        result = layout.load()
+        result = self.env.load_layout(world_config)
         self.entities: dict[str, dict[str, Any]] = result.entities
-        self.env.water_sources = result.water_sources
         self._grid_max: float = result.grid_max
-        layout.randomize(self.entities, self.env.water_sources)
-
-        # ── Seed water source moisture footprints (after randomization) ──
-        for source in self.env.water_sources:
-            self.env.init_water_source_moisture(source)
 
         # ── Movement system (gate + kinematics for mobile entities) ──
         self._movement = MovementSystem(self._grid_max)
