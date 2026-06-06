@@ -32,12 +32,16 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "near_water_distance_buffer": 1.0,
         "water_drain_search_multiplier": 2.0,
         "colony_swarm_exit_threshold": 0.35,
+        "colony_swarm_entry_threshold": 0.3,
     },
     "plant_physiology": {
         "spread_offspring_growth": 0.05,
         "spread_offspring_hydration_factor": 0.8,
         "spread_offspring_nutrient_store": 0.3,
         "spread_offspring_health": 0.8,
+        "evapotranspiration_temp_normalization": 30.0,
+        "slow_nutrient_weight_factor": 0.3,
+        "dormancy_recovery_hydration_floor": 0.02,
     },
     "decomposer_physiology": {
         "active_population_threshold": 0.3,
@@ -70,6 +74,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "predation_consumption_multiplier": 0.1,
         "capture_probability_cap": 0.95,
         "capture_probability_base_offset": 0.2,
+        "capture_probability_fallback": 0.5,
+        "pollination_metabolic_rate_floor": 0.001,
+        "pollination_linger_exponent": 0.3,
         "decomposition_boost_min": 0.5,
         "decomposition_boost_scale": 5.0,
         "speed_coefficients": {

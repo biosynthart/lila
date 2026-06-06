@@ -27,6 +27,7 @@ import math
 import random
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     FLEE_ESCAPE_DISTANCE,
     FLEE_TRIGGER_DISTANCE,
@@ -150,8 +151,8 @@ class FleeActor:
             dx, dz = random.uniform(-1, 1), random.uniform(-1, 1)
             dist = math.sqrt(dx * dx + dz * dz)
 
-        # Clamp to grid bounds (default 32x32 grid)
-        grid_max = 31.0
+        # Clamp to grid bounds
+        grid_max = SIM_CONFIG["movement"]["grid_max_default"]
         escape_x = max(0.0, min(grid_max, pos[0] + (dx / dist) * FLEE_ESCAPE_DISTANCE))
         escape_z = max(0.0, min(grid_max, pos[2] + (dz / dist) * FLEE_ESCAPE_DISTANCE))
         return [escape_x, 0.0, escape_z]

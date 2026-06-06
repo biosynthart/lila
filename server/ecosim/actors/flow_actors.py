@@ -370,7 +370,8 @@ class ProducerFlowActor:
 
         # ── Evapotranspiration — hydration loss (suppressed during rain) ──
         if rain_ticks <= 0:
-            evap = (ctx.biome.evaporation_rate * (temp / 30.0)
+            temp_norm = SIM_CONFIG["plant_physiology"]["evapotranspiration_temp_normalization"]
+            evap = (ctx.biome.evaporation_rate * (temp / temp_norm)
                     * (1.0 - humidity * 0.5) * ctx.rate_multipliers.get("thirst", 1.0))
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="hydration",

@@ -201,7 +201,7 @@ class Predation(InteractionTemplate):
                 + _INTERACTIONS_CFG["capture_probability_base_offset"],
             )
         else:
-            capture_prob = 0.5
+            capture_prob = _INTERACTIONS_CFG["capture_probability_fallback"]
 
         return InteractionParams(
             interaction_type=self.interaction_type,
@@ -261,9 +261,10 @@ class Pollination(InteractionTemplate):
         # Linger time: smaller/faster pollinators spend less time per flower.
         # Use log-scale relationship capped to a reasonable range [5, 50] ticks.
         # At deer-scale BMR (1.0): linger ≈ 20. At butterfly scale: linger ≈ 15-25.
-        if actor_metabolic_rate > 0.001:
+        if actor_metabolic_rate > _INTERACTIONS_CFG["pollination_metabolic_rate_floor"]:
             linger = max(5, min(POLLINATION_MAX_LINGER, int(
-                POLLINATION_LINGER_BASE / (actor_metabolic_rate ** 0.3)
+                POLLINATION_LINGER_BASE
+                / (actor_metabolic_rate ** _INTERACTIONS_CFG["pollination_linger_exponent"])
             )))
         else:
             # Very small organisms: use moderate default

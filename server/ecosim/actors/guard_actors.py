@@ -136,6 +136,7 @@ class ConsumerGuardActor:
 
         # ── Colony swarming (highest behavioral priority) ──
         if "colony_health" in sv:
+            swarm_entry = SIM_CONFIG["consumer_physiology"]["colony_swarm_entry_threshold"]
             if ctx.entity["state"] == "SWARMING":
                 # Exit SWARMING when colony recovers above threshold.
                 # The near-water bonus (WATER_PROXIMITY_COLONY_FACTOR) helps
@@ -146,7 +147,7 @@ class ConsumerGuardActor:
                     effects.append(StateTransition(
                         entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                     ))
-            elif sv["colony_health"] < 0.3:
+            elif sv["colony_health"] < swarm_entry:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="SWARMING", tick=ctx.tick,
                 ))
@@ -400,8 +401,9 @@ class ProducerGuardActor:
                     ctx.biome.plant_dormancy_recovery_health_floor,
                     p.health_drain_dehydrated * ctx.biome.plant_dormancy_recovery_health_multiplier,
                 )
+                hyd_floor = SIM_CONFIG["plant_physiology"]["dormancy_recovery_hydration_floor"]
                 recovery_hydration = max(
-                    0.02,
+                    hyd_floor,
                     p.health_drain_dehydrated * ctx.biome.plant_dormancy_recovery_hydration_multiplier,
                 )
                 effects.append(SetStateVar(
