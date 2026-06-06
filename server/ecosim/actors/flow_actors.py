@@ -390,7 +390,10 @@ class ProducerFlowActor:
 
         # ── Growth — Liebig's law: limited by scarcest resource ──
         light = ctx.biome.light_availability
-        soil_nutrients = ctx.voxel_grid.get("nutrients_fast", gx, gy, gz)
+        fast_nutrients = ctx.voxel_grid.get("nutrients_fast", gx, gy, gz)
+        slow_nutrients = ctx.voxel_grid.get("nutrients_slow", gx, gy, gz)
+        slow_weight = SIM_CONFIG["plant_physiology"]["slow_nutrient_weight_factor"]
+        soil_nutrients = fast_nutrients + slow_nutrients * slow_weight
         growth_potential = min(sv["hydration"], soil_nutrients, light)
         rate_growth = ctx.rate_multipliers.get("growth", 1.0)
         growth_inc = (PLANT_BASE_GROWTH_RATE * growth_potential

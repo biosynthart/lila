@@ -19,6 +19,7 @@ from __future__ import annotations
 
 from typing import TYPE_CHECKING, Any
 
+from .config import SIM_CONFIG
 from .constants import (
     DISSOLUTION_RATE,
     MINERALIZATION_RATE,
@@ -43,6 +44,9 @@ from .effects import (
 if TYPE_CHECKING:
     from .effects import EffectBus
 
+# Soil dynamics toggles (loaded once at module level)
+NUTRIENT_DIFFUSION_ENABLED = SIM_CONFIG.get("soil_dynamics", {}).get(
+    "nutrient_diffusion_enabled", False)
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Soil Evaporation Handler
@@ -63,17 +67,31 @@ class SoilEvaporationHandler(WorldProcessHandler):
         if not isinstance(evap_effect, SoilEvaporation):
             return
 
+        evap = evap_effect.evap_rate  # pre-computed by engine (includes dt)
+        recharge = evap_effect.rainfall_recharge  # ambient biome-dependent gain (includes dt)
+
         if evap_effect.rain_suppressed:
+            # During rain suppression, only apply recharge (no evaporation).
+            if recharge <= 0:
+                return
+            ctx.voxel_grid.walk_layer(
+                "moisture",
+                lambda x, y, z, val: (
+                    ctx.voxel_grid.set("moisture", x, y, z,
+                                       min(1.0, val + recharge))
+                    if val < 1.0
+                    else None),
+            )
             return
 
-        evap = evap_effect.evap_rate  # pre-computed by engine (includes dt)
-
+        # Net change = ambient recharge minus evaporation.
+        net = recharge - evap
         ctx.voxel_grid.walk_layer(
             "moisture",
             lambda x, y, z, val: (
                 ctx.voxel_grid.set("moisture", x, y, z,
-                                   max(SOIL_MOISTURE_FLOOR, val - evap))
-                if val > SOIL_MOISTURE_FLOOR
+                                   max(SOIL_MOISTURE_FLOOR, min(1.0, val + net)))
+                if abs(net) > 0
                 else None),
         )
 
@@ -216,11 +234,18 @@ class NutrientPoolDynamicsHandler(WorldProcessHandler):
     2. Dissolution: nutrients_slow → nutrients_fast
     3. Leaching: nutrients_fast drains slowly
 
+    Additionally runs lateral nutrient diffusion every ``DIFFUSION_PERIOD``
+    ticks (default 5) to avoid O(N_cells × 6) dict lookups on every tick.
+    Diffusion is horizontal only (x-z plane) — vertical soil diffusion is
+    negligible compared to lateral spread.
+
     Rate multipliers from context scale each process independently.
     """
 
     handles = (NutrientPoolDynamics,)
     period: int = 1
+    DIFFUSION_PERIOD: int = 5  # run diffusion every N ticks
+    _diffusion_tick_counter: int = 0
 
     def resolve(self, effect: Effect, ctx: WorldProcessContext) -> None:
         pool_effect = effect
@@ -280,6 +305,54 @@ class NutrientPoolDynamicsHandler(WorldProcessHandler):
             vg.set("organic_matter", gx, gy, gz, max(0.0, min(1.0, om)))
             vg.set("nutrients_slow", gx, gy, gz, max(0.0, min(1.0, slow)))
             vg.set("nutrients_fast", gx, gy, gz, max(0.0, min(1.0, fast)))
+
+        # 4. Diffusion: horizontal spread between adjacent cells (biome-dependent).
+        #    Runs every DIFFUSION_PERIOD ticks to keep per-tick cost low.
+        #    Gated by sim_config soil_dynamics.nutrient_diffusion_enabled.
+        if NUTRIENT_DIFFUSION_ENABLED:
+            self._diffusion_tick_counter += 1
+            if self._diffusion_tick_counter % self.DIFFUSION_PERIOD == 0:
+                diffusion_rate = ctx.biome.nutrient_diffusion_rate if ctx.biome else 0.0
+                if diffusion_rate > 0:
+                    # Scale blend by period so total diffusion rate is independent of frequency.
+                    effective_dt = dt * self.DIFFUSION_PERIOD
+                    self._diffuse_layer(vg, "nutrients_fast", diffusion_rate, effective_dt)
+                    self._diffuse_layer(vg, "nutrients_slow", diffusion_rate, effective_dt)
+
+    @staticmethod
+    def _diffuse_layer(
+        vg: Any,
+        layer: str,
+        rate: float,
+        dt: float,
+    ) -> None:
+        """Spread nutrients horizontally (x-z plane) between adjacent cells.
+
+        Uses a snapshot of current values so all updates are based on the same
+        state. Only 4 horizontal neighbors — vertical soil diffusion is negligible.
+        """
+        # Gather current values for this layer.
+        current: dict[tuple[int, int, int], float] = {}
+        vg.walk_layer(
+            layer,
+            lambda x, y, z, v: current.setdefault((x, y, z), v) or None,
+        )
+
+        blend = rate * dt  # fraction to move toward neighbor average per tick
+        updates: dict[tuple[int, int, int], float] = {}
+        for (gx, gy, gz), val in current.items():
+            # Horizontal neighbors only (x-z plane).
+            neighbors = [
+                (gx + 1, gy, gz), (gx - 1, gy, gz),
+                (gx, gy, gz + 1), (gx, gy, gz - 1),
+            ]
+            neighbor_sum = sum(current.get(n, 0.0) for n in neighbors)
+            avg = neighbor_sum / len(neighbors)
+            updates[(gx, gy, gz)] = val + blend * (avg - val)
+
+        # Write back.
+        for (gx, gy, gz), new_val in updates.items():
+            vg.set(layer, gx, gy, gz, max(0.0, min(1.0, new_val)))
 
 def deposit_organic_matter(
     entity: dict,

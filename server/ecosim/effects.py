@@ -228,6 +228,7 @@ class SoilEvaporation(Effect):
     effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
     evap_rate: float  # pre-computed per-cell moisture loss (includes dt)
     rain_suppressed: bool  # True during RAIN_SUPPRESSION_TICKS
+    rainfall_recharge: float = 0.0  # ambient biome-dependent recharge (includes dt)
 
 
 @dataclass(frozen=True, kw_only=True)

@@ -59,6 +59,10 @@ from __future__ import annotations
 
 from typing import Any
 
+from .config import SIM_CONFIG
+
+DEFAULT_DT = SIM_CONFIG["engine_defaults"]["default_dt"]
+
 from .actors import (
     FlowContext,
     GuardContext,
@@ -269,19 +273,22 @@ class EcosystemEngine:
     # Public API
     # ═══════════════════════════════════════════════════════════════════════
 
-    def step(self, dt: float = 0.1) -> dict[str, Any]:
+    def step(self, dt: float | None = None) -> dict[str, Any]:
         """Advance the simulation by one tick.
 
         Executes the seven-phase hybrid automaton and returns a delta-encoded
         tick packet for client rendering via WebSocket.
 
         Args:
-            dt: Time step in seconds. Default 0.1 (10 Hz).
+            dt: Time step in seconds. Defaults to ``engine_defaults.default_dt``
+                from sim_config.json (0.1 = 10 Hz).
 
         Returns:
             Tick packet dict containing entity updates, spawns, removals,
             events, voxel deltas, and water source states.
         """
+        if dt is None:
+            dt = DEFAULT_DT
         self.tick += 1
         self._events.clear()
         self._spawns.clear()
@@ -405,6 +412,7 @@ class EcosystemEngine:
                     * self.rate_thirst * dt
                 ),
                 rain_suppressed=rain_suppressed,
+                rainfall_recharge=self.env.biome.rainfall_recharge * dt,
             ),
             NutrientPoolDynamics(tick=self.tick, dt=dt),
         ]
@@ -413,7 +421,8 @@ class EcosystemEngine:
                 tick=self.tick,
                 sources=self.env.water_sources,
                 evap_loss=WATER_EVAPORATION_RATE * self.rate_thirst * dt,
-                replenish_gain=WATER_REPLENISH_RATE * self.rate_water_replenish * dt,
+                replenish_gain=(WATER_REPLENISH_RATE + self.env.biome.rainfall_recharge)
+                    * self.rate_water_replenish * dt,
                 soil_refill_rate=WATER_REFILL_RATE * self.rate_water_replenish * dt,
                 soil_dry_rate=self.env.biome.soil_dry_rate_outside_footprint * dt,
             ))

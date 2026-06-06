@@ -21,6 +21,11 @@
     "dormancy_recovery_hydration_floor": 0.02
   },
 
+  "soil_dynamics": {
+    "_comment": "Soil-level process toggles",
+    "nutrient_diffusion_enabled": false
+  },
+
   "decomposer_physiology": {
     "_comment": "Universal decomposer thresholds (rates are in BiomeConfig)",
     "active_population_threshold": 0.3,

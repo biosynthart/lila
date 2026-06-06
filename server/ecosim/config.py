@@ -43,6 +43,9 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         "slow_nutrient_weight_factor": 0.3,
         "dormancy_recovery_hydration_floor": 0.02,
     },
+    "soil_dynamics": {
+        "nutrient_diffusion_enabled": False,
+    },
     "decomposer_physiology": {
         "active_population_threshold": 0.3,
         "blooming_organic_matter_threshold": 0.8,
