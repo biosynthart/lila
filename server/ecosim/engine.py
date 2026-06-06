@@ -649,7 +649,10 @@ class EcosystemEngine:
 
         # Engine-level bookkeeping (tick counters, event log)
         self._rain_ticks_remaining = RAIN_SUPPRESSION_TICKS
-        self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
+        # Only set if not already active — prevents spam-clicking rain
+        # from extending the recovery window indefinitely.
+        if self._recent_rain_recovery_ticks <= 0:
+            self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
         self._events.append({"type": "RAIN", "tick": self.tick, **event})
 
     # ═══════════════════════════════════════════════════════════════════════

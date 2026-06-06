@@ -176,7 +176,18 @@ class ConsumerFlowActor:
             # with the 3× boost they reach it in ~740 ticks — within the recovery window.
             repro_multiplier = rate_repro
             if getattr(ctx, "recent_rain_recovery_ticks", 0) > 0:
-                repro_multiplier *= RAIN_REPRO_BOOST_MULTIPLIER
+                # Scale boost by generation time: fast-reproducing species (e.g.
+                # butterflies with ~200 tick lifespans) get little/no extra boost
+                # because they can already recover on their own. Slow-reproducing
+                # K-selected species (e.g. deer with 5000+ tick lifespans) get the
+                # full boost so populations can rebuild before individuals die out.
+                gen = p.generation_time_ticks if p.generation_time_ticks > 0 else 5000
+                if gen <= 100:
+                    effective_boost = 1.0  # no extra boost for very fast reproducers
+                else:
+                    gen_factor = min(1.0, (gen - 100) / 400.0)
+                    effective_boost = 1.0 + (RAIN_REPRO_BOOST_MULTIPLIER - 1) * gen_factor
+                repro_multiplier *= effective_boost
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="reproductive_drive",
                 delta=p.repro_drive_build * repro_multiplier * dt, tick=ctx.tick,
