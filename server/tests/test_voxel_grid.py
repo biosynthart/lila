@@ -162,9 +162,9 @@ class TestWalkLayer:
 
     def test_callback_receives_values(self):
         grid = make_grid()
-        grid.set("nutrients", 1, 1, 1, 0.3)
+        grid.set("nutrients_fast", 1, 1, 1, 0.3)
         values: list[float] = []
-        grid.walk_layer("nutrients", lambda x, y, z, v: values.append(v))
+        grid.walk_layer("nutrients_fast", lambda x, y, z, v: values.append(v))
         assert 0.3 in values
 
     def test_full_grid_walk(self):
@@ -172,8 +172,8 @@ class TestWalkLayer:
         grid = make_grid((4, 4, 4))
         grid.initialize_from_soil({"nitrogen": 0.5, "phosphorus": 0.5, "potassium": 0.5})
         count = [0]  # use list for mutability in lambda
-        grid.walk_layer("nutrients", lambda x, y, z, v: count.__setitem__(0, count[0] + 1))
-        # Nutrient val is 0.5 which differs from DEFAULT_VALUE=1.0, so all cells set
+        grid.walk_layer("nutrients_fast", lambda x, y, z, v: count.__setitem__(0, count[0] + 1))
+        # Nutrient val is 0.2 (40% of 0.5) which differs from DEFAULT_VALUE=1.0
         assert count[0] == 64
 
     def test_walk_does_not_include_defaults(self):
@@ -261,13 +261,13 @@ class TestHandlerIntegration:
         handler = SoilDrainHandler()
         effect = SoilDrain(
             tick=1, entity_id="mushroom-1", position=[8.5, 0.0, 8.5],
-            layer="nutrients", amount=-0.3)
+            layer="nutrients_fast", amount=-0.3)
 
         handler.resolve(effect, ctx)
 
         # Only the center cell should be affected
         gx, gy, gz = grid.world_to_grid(8.5, 0.0, 8.5)
-        assert grid.get("nutrients", gx, gy, gz) < DEFAULT_VALUE - DIRTY_THRESHOLD
+        assert grid.get("nutrients_fast", gx, gy, gz) < DEFAULT_VALUE - DIRTY_THRESHOLD
 
     def test_soil_deposit_handler_with_radius(self):
         from ecosim.effects import SoilDeposit, WorldProcessContext

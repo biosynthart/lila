@@ -20,6 +20,9 @@ from __future__ import annotations
 from typing import TYPE_CHECKING, Any
 
 from .constants import (
+    DISSOLUTION_RATE,
+    MINERALIZATION_RATE,
+    NUTRIENT_LEACH_RATE,
     OM_DEPOSIT_MAX,
     OM_DEPOSIT_MIN,
     OM_DEPOSIT_SCALE,
@@ -28,6 +31,7 @@ from .constants import (
 )
 from .effects import (
     Effect,
+    NutrientPoolDynamics,
     SoilDeposit,
     SoilDrain,
     SoilEvaporation,
@@ -200,8 +204,81 @@ class SoilDepositHandler(WorldProcessHandler):
 
 
 # ═══════════════════════════════════════════════════════════════════════════════
-# Standalone World-Process Functions
+# Nutrient Pool Dynamics Handler (two-pool nutrient model)
 # ═══════════════════════════════════════════════════════════════════════════════
+
+class NutrientPoolDynamicsHandler(WorldProcessHandler):
+    """Handles per-tick two-pool nutrient fluxes.
+
+    Runs every tick (period=1). Three processes:
+    1. Mineralization: organic_matter → nutrients_slow
+    2. Dissolution: nutrients_slow → nutrients_fast
+    3. Leaching: nutrients_fast drains slowly
+
+    Rate multipliers from context scale each process independently.
+    """
+
+    handles = (NutrientPoolDynamics,)
+    period: int = 1
+
+    def resolve(self, effect: Effect, ctx: WorldProcessContext) -> None:
+        pool_effect = effect
+        if not isinstance(pool_effect, NutrientPoolDynamics):
+            return
+
+        vg = ctx.voxel_grid
+        rates = ctx.rate_multipliers
+        mineral_mult = rates.get("mineralization", 1.0)
+        dissolution_mult = rates.get("dissolution", 1.0)
+        leach_mult = rates.get("nutrient_leaching", 1.0)
+        dt = pool_effect.dt
+
+        # Process each layer independently to avoid reading DEFAULT_VALUE
+        # for layers that don't have the cell explicitly set.
+        # walk_layer only visits cells in _data[layer], so we process per-layer.
+
+        # Track which cells we've already handled this tick (a cell may appear
+        # in multiple layers — we need to apply all three fluxes together).
+        processed: dict[tuple[int, int, int], dict[str, float]] = {}
+
+        def _gather(layer: str) -> None:
+            vg.walk_layer(
+                layer,
+                lambda x, y, z, v: (
+                    processed.setdefault((x, y, z), {})
+                ).__setitem__(layer, v),
+            )
+
+        _gather("organic_matter")
+        _gather("nutrients_slow")
+        _gather("nutrients_fast")
+
+        for (gx, gy, gz), vals in processed.items():
+            om = vals.get("organic_matter", 0.0)
+            slow = vals.get("nutrients_slow", 0.0)
+            fast = vals.get("nutrients_fast", 0.0)
+
+            # 1. Mineralization: organic_matter → nutrients_slow
+            mineralized = om * MINERALIZATION_RATE * mineral_mult * dt
+            if mineralized > 0:
+                om -= mineralized
+                slow += mineralized
+
+            # 2. Dissolution: nutrients_slow → nutrients_fast
+            dissolved = slow * DISSOLUTION_RATE * dissolution_mult * dt
+            if dissolved > 0:
+                slow -= dissolved
+                fast += dissolved
+
+            # 3. Leaching: nutrients_fast drains
+            leached = fast * NUTRIENT_LEACH_RATE * leach_mult * dt
+            if leached > 0:
+                fast -= leached
+
+            # Clamp and write back.
+            vg.set("organic_matter", gx, gy, gz, max(0.0, min(1.0, om)))
+            vg.set("nutrients_slow", gx, gy, gz, max(0.0, min(1.0, slow)))
+            vg.set("nutrients_fast", gx, gy, gz, max(0.0, min(1.0, fast)))
 
 def deposit_organic_matter(
     entity: dict,
@@ -245,3 +322,4 @@ def register_default_world_handlers(bus: EffectBus) -> None:  # noqa: F821
     bus.register_world_handler(WaterReplenishHandler())
     bus.register_world_handler(SoilDrainHandler())
     bus.register_world_handler(SoilDepositHandler())
+    bus.register_world_handler(NutrientPoolDynamicsHandler())

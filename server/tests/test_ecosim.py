@@ -130,7 +130,11 @@ def test_voxel_initialize_from_soil():
     vm.initialize_from_soil(soil)
     assert abs(vm.get("moisture", 0, 0, 0) - 0.65) < 0.01
     assert abs(vm.get("organic_matter", 0, 0, 0) - 0.4) < 0.01
-    assert abs(vm.get("nutrients", 0, 0, 0) - 0.6) < 0.01
+    # Two-pool split: base=0.6 → fast=0.24 (40%), slow=0.36 (60%)
+    assert abs(vm.get("nutrients_fast", 0, 0, 0) - 0.24) < 0.01
+    assert abs(vm.get("nutrients_slow", 0, 0, 0) - 0.36) < 0.01
+    # Backward-compat alias: "nutrients" → "nutrients_fast"
+    assert abs(vm.get("nutrients", 0, 0, 0) - 0.24) < 0.01
 
 
 def test_water_sources():

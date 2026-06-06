@@ -281,10 +281,10 @@ class ReproductionActor:
                     value=float(p.spread_cooldown // 2), tick=ctx.tick,
                 )]
 
-        # Soil quality check at target position
+        # Soil quality check at target position (fast pool = immediately available)
         gx, gy, gz = ctx.voxel_grid.world_to_grid(*spread_pos)
         if (ctx.voxel_grid.get("moisture", gx, gy, gz) < SPREAD_SOIL_MIN_MOISTURE
-                or ctx.voxel_grid.get("nutrients", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
+                or ctx.voxel_grid.get("nutrients_fast", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
             return []
 
         # Offspring state vars (matches engine inline)

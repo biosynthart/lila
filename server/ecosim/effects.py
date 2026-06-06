@@ -268,6 +268,19 @@ class SoilDeposit(Effect):
 
 
 @dataclass(frozen=True, kw_only=True)
+class NutrientPoolDynamics(Effect):
+    """Intent: run per-tick two-pool nutrient fluxes.
+
+    Mineralization (organic_matter → nutrients_slow),
+    dissolution (nutrients_slow → nutrients_fast),
+    and leaching (nutrients_fast drains).
+    Rate multipliers are applied by the handler from context.
+    """
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    dt: float  # time step
+
+
+@dataclass(frozen=True, kw_only=True)
 class RainEvent(Effect):
     """Intent: apply rainfall across the world (soil + water sources + entities)."""
     effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat

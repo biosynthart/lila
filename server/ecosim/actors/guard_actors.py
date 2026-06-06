@@ -377,7 +377,11 @@ class ProducerGuardActor:
         elif ctx.entity["state"] == "DORMANT":
             gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
             soil_moisture = ctx.voxel_grid.get("moisture", gx, gy, gz)
-            soil_nutrients = ctx.voxel_grid.get("nutrients", gx, gy, gz)
+            # Weighted effective nutrients: fast pool dominates,
+            # slow pool contributes as a buffer (soil health memory).
+            n_fast = ctx.voxel_grid.get("nutrients_fast", gx, gy, gz)
+            n_slow = ctx.voxel_grid.get("nutrients_slow", gx, gy, gz)
+            soil_nutrients = n_fast + n_slow * 0.3
 
             # Increment dormant ticks counter
             current_dormant_ticks = sv.get("_dormant_ticks", 0) + 1

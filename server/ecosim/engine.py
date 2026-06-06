@@ -82,6 +82,7 @@ from .constants import (
 )
 from .effects import (
     EffectBus,
+    NutrientPoolDynamics,
     SoilDeposit,
     SoilDrain,
     SoilEvaporation,
@@ -173,6 +174,10 @@ class EcosystemEngine:
         self.rate_growth: float = rates.get("growth", 1.0)
         self.rate_reproduction: float = rates.get("reproduction", 1.0)
         self.rate_water_replenish: float = rates.get("water_replenishment", 1.0)
+        # Two-pool nutrient rate multipliers (default 1.0 for backward compat)
+        self.rate_mineralization: float = rates.get("mineralization", 1.0)
+        self.rate_dissolution: float = rates.get("dissolution", 1.0)
+        self.rate_nutrient_leaching: float = rates.get("nutrient_leaching", 1.0)
 
         # ── Internal bookkeeping ──
         self._events: list[dict[str, Any]] = []
@@ -372,6 +377,9 @@ class EcosystemEngine:
                 "growth": self.rate_growth,
                 "reproduction": self.rate_reproduction,
                 "water_replenishment": self.rate_water_replenish,
+                "mineralization": self.rate_mineralization,
+                "dissolution": self.rate_dissolution,
+                "nutrient_leaching": self.rate_nutrient_leaching,
             },
         )
         self.effect_bus.apply_world_batch(voxel_effects, self.tick, world_ctx)
@@ -398,6 +406,7 @@ class EcosystemEngine:
                 ),
                 rain_suppressed=rain_suppressed,
             ),
+            NutrientPoolDynamics(tick=self.tick, dt=dt),
         ]
         if self.env.water_sources:
             world_effects.append(WaterReplenish(
@@ -581,7 +590,7 @@ class EcosystemEngine:
                 tick=self.tick,
                 entity_id=e["id"],
                 position=e["position"],
-                layer="nutrients",
+                layer="nutrients_fast",
                 amount=-total_demand * dt,
                 radius=footprint_r,
             ))
@@ -606,11 +615,12 @@ class EcosystemEngine:
                 layer="organic_matter",
                 amount=-rate,
             ))
+            # Decomposers mineralize OM into the slow nutrient pool
             effects.append(SoilDeposit(
                 tick=self.tick,
                 entity_id=e["id"],
                 position=e["position"],
-                layer="nutrients",
+                layer="nutrients_slow",
                 amount=rate * DECOMP_NUTRIENT_EFFICIENCY,
             ))
 
