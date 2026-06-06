@@ -122,7 +122,7 @@ def load_sim_config(path: str | pathlib.Path | None = None) -> dict[str, Any]:
 
     json_path = pathlib.Path(path)
     if json_path.is_file():
-        with open(json_path, "r") as f:
+        with open(json_path) as f:
             file_config = json.load(f)
         config = _deep_merge(config, file_config)
 

@@ -80,7 +80,11 @@ class MovementActor:
         pos = ctx.entity["position"]
         # grid_max: prefer explicit context field, fall back to config default
         grid_max_raw = getattr(ctx, "_grid_max", None)
-        grid_max = grid_max_raw if isinstance(grid_max_raw, (int, float)) else SIM_CONFIG["movement"]["grid_max_default"]
+        grid_max = (
+            grid_max_raw
+            if isinstance(grid_max_raw, (int, float))
+            else SIM_CONFIG["movement"]["grid_max_default"]
+        )
 
         # ── SWARMING — colony under stress, seek water for survival ──
         if state == "SWARMING":

@@ -28,8 +28,7 @@ from __future__ import annotations
 
 import json
 import pathlib
-from dataclasses import dataclass, field
-from typing import Any
+from dataclasses import dataclass
 
 
 @dataclass(frozen=True)
@@ -102,7 +101,7 @@ def _load_builtin_biomes() -> None:
         _BIOME_REGISTRY["TEMPERATE"] = _DEFAULT_BIOME
         return
 
-    with open(json_path, "r") as f:
+    with open(json_path) as f:
         data = json.load(f)
 
     for name, values in data.items():
