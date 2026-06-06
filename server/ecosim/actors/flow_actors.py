@@ -18,6 +18,7 @@ import math
 from dataclasses import replace
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     ACTIVE_ENERGY_DRAIN_STATES,
     COLLAPSE_HEALTH_MULTIPLIER,
@@ -138,7 +139,8 @@ class ConsumerFlowActor:
             self._drain_nearest_water(ctx, DRINK_WATER_DRAIN * dt)
 
         else:
-            thirst = p.thirst_rate * (temp / 30.0) * dt
+            temp_norm = SIM_CONFIG["consumer_physiology"]["temperature_normalization"]
+            thirst = p.thirst_rate * (temp / temp_norm) * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="hydration",
                 delta=-thirst, tick=ctx.tick,
@@ -246,7 +248,8 @@ class ConsumerFlowActor:
             dx = pos[0] - source["position"][0]
             dz = pos[2] - source["position"][2]
             dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= source.get("radius", 1.0) + 1.0:
+            near_buffer = SIM_CONFIG["consumer_physiology"]["near_water_distance_buffer"]
+            if dist <= source.get("radius", 1.0) + near_buffer:
                 return True
         return False
 
@@ -260,7 +263,8 @@ class ConsumerFlowActor:
                 (pos[0] - source["position"][0]) ** 2 +
                 (pos[2] - source["position"][2]) ** 2
             )
-            if d < source.get("max_radius", 2.0) * 2 and d < best_dist:
+            drain_mult = SIM_CONFIG["consumer_physiology"]["water_drain_search_multiplier"]
+            if d < source.get("max_radius", 1.0) * drain_mult and d < best_dist:
                 best_dist, best = d, source
         if best is not None:
             best["water_level"] = max(0.0, best["water_level"] - amount)
@@ -284,7 +288,7 @@ class ConsumerFlowActor:
 
         # Pollinators sense across the entire grid; others use sensory_range.
         if p.floral_affinity:
-            search_radius = 31.0  # grid_max default (matches engine _grid_max)
+            search_radius = SIM_CONFIG["movement"]["grid_max_default"]
         else:
             search_radius = p.sensory_range
 
@@ -510,21 +514,21 @@ class DecomposerFlowActor:
 
         # Activity approaches equilibrium (exponential smoothing)
         optimal_activity = min(organic, moisture) * ctx.biome.microbial_activity_modifier
-        activity_delta = (optimal_activity - sv["activity"]) * 0.1 * dt
+        activity_delta = (optimal_activity - sv["activity"]) * ctx.biome.decomposer_activity_smoothing_factor * dt
         effects.append(StateVarDelta(
             entity_id=ctx.entity["id"], var_name="activity",
             delta=activity_delta, tick=ctx.tick,
         ))
 
         # Population dynamics
-        if sv["activity"] > 0.3:
-            pop_growth = 0.005 * sv["activity"] * dt
+        if sv["activity"] > SIM_CONFIG["decomposer_physiology"]["active_population_threshold"]:
+            pop_growth = ctx.biome.decomposer_population_growth_rate * sv["activity"] * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="population",
                 delta=pop_growth, tick=ctx.tick,
             ))
         else:
-            pop_decay = -0.003 * dt
+            pop_decay = -ctx.biome.decomposer_population_decay_rate * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="population",
                 delta=pop_decay, tick=ctx.tick,

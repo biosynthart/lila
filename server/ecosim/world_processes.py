@@ -128,10 +128,11 @@ class WaterReplenishHandler(WorldProcessHandler):
                 if dist_sq <= eff_r * eff_r:
                     continue
                 current = ctx.voxel_grid.get("moisture", gx, gy, gz)
-                if current > 0.3:
+                floor_val = ctx.biome.soil_moisture_floor_outside_water
+                if current > floor_val:
                     ctx.voxel_grid.set(
                         "moisture", gx, gy, gz,
-                        max(0.3, current - replenish_effect.soil_dry_rate),
+                        max(floor_val, current - replenish_effect.soil_dry_rate),
                     )
 
 

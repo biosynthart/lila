@@ -415,7 +415,7 @@ class EcosystemEngine:
                 evap_loss=WATER_EVAPORATION_RATE * self.rate_thirst * dt,
                 replenish_gain=WATER_REPLENISH_RATE * self.rate_water_replenish * dt,
                 soil_refill_rate=WATER_REFILL_RATE * self.rate_water_replenish * dt,
-                soil_dry_rate=0.02 * dt,
+                soil_dry_rate=self.env.biome.soil_dry_rate_outside_footprint * dt,
             ))
         self.effect_bus.apply_world_batch(world_effects, self.tick, world_ctx)
 

@@ -22,6 +22,7 @@ import math
 import random as _random
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     CHILD_COLONY_FLOOR,
     CHILD_COLONY_INHERIT,
@@ -142,7 +143,8 @@ class ReproductionActor:
 
         # Colony health cost for insect-type entities (check type, not diet_type)
         if "colony_health" in sv and ctx.entity.get("type") == "INSECT":
-            colony_cost = p.parent_energy_cost * 0.3
+            repro_cfg = SIM_CONFIG["reproduction"]
+            colony_cost = p.parent_energy_cost * repro_cfg["colony_health_repro_cost_factor"]
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="colony_health",
                 delta=-colony_cost, tick=ctx.tick,
@@ -287,12 +289,14 @@ class ReproductionActor:
                 or ctx.voxel_grid.get("nutrients_fast", gx, gy, gz) < SPREAD_SOIL_MIN_NUTRIENTS):
             return []
 
-        # Offspring state vars (matches engine inline)
+        # Offspring state vars (from config)
+        plant_cfg = SIM_CONFIG["plant_physiology"]
         offspring_sv = {
-            "growth": 0.05,
-            "hydration": ctx.voxel_grid.get("moisture", gx, gy, gz) * 0.8,
-            "nutrient_store": 0.3,
-            "health": 0.8,
+            "growth": plant_cfg["spread_offspring_growth"],
+            "hydration": ctx.voxel_grid.get("moisture", gx, gy, gz)
+                * plant_cfg["spread_offspring_hydration_factor"],
+            "nutrient_store": plant_cfg["spread_offspring_nutrient_store"],
+            "health": plant_cfg["spread_offspring_health"],
             "age": 0.0,
         }
 

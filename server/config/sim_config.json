@@ -1,0 +1,71 @@
+{
+  "_comment": "l\u012bl\u0101 simulation tunable parameters — global defaults. Biome-dependent values live in biomes.json / BiomeConfig.",
+
+  "consumer_physiology": {
+    "_comment": "Universal consumer behavior constants (same across all biomes)",
+    "temperature_normalization": 30.0,
+    "near_water_distance_buffer": 1.0,
+    "water_drain_search_multiplier": 2.0,
+    "colony_swarm_exit_threshold": 0.35
+  },
+
+  "plant_physiology": {
+    "_comment": "Universal plant behavior constants (dormancy recovery is in BiomeConfig)",
+    "spread_offspring_growth": 0.05,
+    "spread_offspring_hydration_factor": 0.8,
+    "spread_offspring_nutrient_store": 0.3,
+    "spread_offspring_health": 0.8
+  },
+
+  "decomposer_physiology": {
+    "_comment": "Universal decomposer thresholds (rates are in BiomeConfig)",
+    "active_population_threshold": 0.3,
+    "blooming_organic_matter_threshold": 0.8,
+    "blooming_population_threshold": 0.7,
+    "dormant_activity_threshold": 0.2
+  },
+
+  "movement": {
+    "_comment": "Target selection and movement mechanics (universal)",
+    "grid_max_default": 31.0,
+    "mate_minimum_distance": 1.0,
+    "food_growth_viability_threshold": 0.1,
+    "water_source_min_distance": 0.1,
+    "water_approach_radius_factor": 0.5,
+    "wander_grid_margin": 0.5,
+    "arrival_threshold_double": 2.0
+  },
+
+  "reproduction": {
+    "_comment": "Entity spawning and inheritance (universal)",
+    "colony_health_repro_cost_factor": 0.3
+  },
+
+  "interactions": {
+    "_comment": "Ecological interaction templates (universal)",
+    "mass_ratio_windows": {
+      "carnivore": [0.1, 2.0],
+      "insectivore": [1.0, 1000.0],
+      "omnivore": [0.1, 100.0],
+      "piscivore": [0.01, 10.0]
+    },
+    "pollination_linger_base": 20.0,
+    "pollination_cooldown_ticks": 50,
+    "herbivory_consumption_multiplier": 0.05,
+    "predation_consumption_multiplier": 0.1,
+    "capture_probability_cap": 0.95,
+    "capture_probability_base_offset": 0.2,
+    "decomposition_boost_min": 0.5,
+    "decomposition_boost_scale": 5.0,
+    "speed_coefficients": {
+      "flight_insect": [0.60, 0.17],
+      "flight_bird": [0.55, 0.17],
+      "quadruped": [0.0502, 0.25]
+    }
+  },
+
+  "engine_defaults": {
+    "_comment": "Engine-level default values",
+    "default_dt": 0.1
+  }
+}
