@@ -51,11 +51,11 @@
     "seed": 42
   },
   "rates": {
-    "consumption": 3.0,
-    "hunger": 2.5,
-    "thirst": 2.0,
+    "consumption": 4.0,
+    "hunger": 1.0,
+    "thirst": 1.0,
     "growth": 0.6,
-    "reproduction": 2.0,
+    "reproduction": 1.0,
     "water_replenishment": 0.4
   },
   "randomize": {
@@ -114,7 +114,7 @@
     {
       "id": "butterfly_01",
       "type": "INSECT",
-      "species": "monarch",
+      "species": "butterfly",
       "position": [
         10.0,
         0.0,
@@ -133,7 +133,7 @@
     {
       "id": "butterfly_02",
       "type": "INSECT",
-      "species": "monarch",
+      "species": "butterfly",
       "position": [
         18.0,
         0.0,
@@ -584,7 +584,7 @@
       "resource_tags": []
     },
     {
-      "species_id": "monarch",
+      "species_id": "butterfly",
       "functional_group": "pollinator",
       "entity_class": "INSECT",
       "body_mass_kg": 0.0005,
@@ -597,7 +597,7 @@
       ],
       "trophic_level": 2.0,
       "reproductive_strategy": "r_selected",
-      "clutch_size": 2,
+      "clutch_size": 1,
       "generation_time_ticks": 2000,
       "thermal_range": [
         10,
