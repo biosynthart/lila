@@ -9,17 +9,9 @@ Validates the split of the single ``nutrients`` layer into
 
 from __future__ import annotations
 
-import pytest
-
-from ecosim.constants import (
-    DISSOLUTION_RATE,
-    MINERALIZATION_RATE,
-    NUTRIENT_LEACH_RATE,
-)
 from ecosim.effects import NutrientPoolDynamics, WorldProcessContext
 from ecosim.voxel_manager import DEFAULT_VALUE, UniformVoxelGrid
 from ecosim.world_processes import NutrientPoolDynamicsHandler
-
 
 # ═══════════════════════════════════════════════════════════════════════════════
 # Helpers

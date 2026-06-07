@@ -63,7 +63,8 @@ from .config import SIM_CONFIG
 
 DEFAULT_DT = SIM_CONFIG["engine_defaults"]["default_dt"]
 
-from .actors import (
+# noqa: E402 — imports after config init to avoid circular dependencies
+from .actors import (  # noqa: E402
     FlowContext,
     GuardContext,
     InteractionContext,
@@ -71,7 +72,7 @@ from .actors import (
     build_guard_registry,
     build_interaction_registry,
 )
-from .constants import (
+from .constants import (  # noqa: E402
     DECOMP_NUTRIENT_EFFICIENCY,
     PLANT_BASE_WATER_DEMAND,
     PLANT_DEFAULT_NUTRIENT_DEMAND,
@@ -84,7 +85,7 @@ from .constants import (
     WATER_REFILL_RATE,
     WATER_REPLENISH_RATE,
 )
-from .effects import (
+from .effects import (  # noqa: E402
     EffectBus,
     NutrientPoolDynamics,
     SoilDeposit,
@@ -93,14 +94,14 @@ from .effects import (
     WaterReplenish,
     WorldProcessContext,
 )
-from .entities import init_entity, is_alive
-from .environment_manager import EnvironmentManager
-from .model_adapter import MotorAdapter, build_context
-from .movement_system import MovementSystem
-from .spatial_index import SpatialQuery
-from .trait_compiler import CompiledEcology, compile_world
-from .traits import DerivedParams
-from .world_processes import (
+from .entities import init_entity, is_alive  # noqa: E402
+from .environment_manager import EnvironmentManager  # noqa: E402
+from .model_adapter import MotorAdapter, build_context  # noqa: E402
+from .movement_system import MovementSystem  # noqa: E402
+from .spatial_index import SpatialQuery  # noqa: E402
+from .trait_compiler import CompiledEcology, compile_world  # noqa: E402
+from .traits import DerivedParams  # noqa: E402
+from .world_processes import (  # noqa: E402
     deposit_organic_matter,
     register_default_world_handlers,
 )
