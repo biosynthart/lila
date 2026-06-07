@@ -721,6 +721,75 @@ Abstracts voxel storage strategy via `VoxelGrid` Protocol so that engine and han
 
 ---
 
+## In Progress — Hybrid Model + Simulation (Milestone 4)
+
+**Goal:** Extend BYOM from motor inference to full phase-level pluggability. The engine can run in pure physics mode to generate training data, then swap learned models into individual simulation phases.
+
+**Epic:** [#80](https://github.com/hellolifeforms/lila/issues/80) — Extend BYOM from motor inference to full phase-level pluggability
+
+### Architecture Vision
+
+```
+Phase 1  Flow          ──► Physics OR LearnedFlowAdapter
+Phase 2  Interactions  ──► Templates OR LearnedInteraction
+Phase 3  Guards        ──► Thresholds OR BehaviorAdapter (#20)
+Phase 4  Voxel FX      ──► Handlers OR VoxelAdapter (#79)
+Phase 5  Water/Soil    ──► Handlers OR WorldAdapter
+Phase 6  Motor         ──► MotorAdapter (already implemented)
+Phase 7  Spawn/Kill    ──► EffectBus (always physics for now)
+```
+
+Each phase has a **physics default** and an optional **model override**. The engine dispatches to whichever is registered. Physics always runs in "pure" mode for data generation.
+
+### Phase Plan + Issues
+
+| # | Issue | Role |
+|---|-------|------|
+| [#77](https://github.com/hellolifeforms/lila/issues/77) | Telemetry emitter: config snapshot + time-series aggregates + event batching | Foundation — three-stream data collection |
+| [#78](https://github.com/hellolifeforms/lila/issues/78) | Surrogate model + sensitivity analysis over sim_config parameter space | Understanding — which of ~48 tunable params actually matter |
+| [#79](https://github.com/hellolifeforms/lila/issues/79) | Learned diffusion: replace or gate voxel nutrient diffusion with a model | First replacement — O(N×4) → O(1) forward pass |
+| [#20](https://github.com/hellolifeforms/lila/issues/20) | Behavior-level adapter | Guard augmentation — learned threshold bias per entity |
+| [#21](https://github.com/hellolifeforms/lila/issues/21) | Narrative-level adapter | Macro intelligence — ecosystem-scale event injection |
+
+### Telemetry Streams (from #77)
+
+Three streams feed the training pipeline:
+
+1. **Config snapshot** (once per run): biome, merged sim_config, world rates, species count, grid dimensions, seed
+2. **Time-series aggregates** (every K ticks): per-species mean/std of state vars, voxel layer statistics (mean/min/max/var), event window counts, population counts by species/state
+3. **Event log** (batched): existing EventRecord stream with tick ranges
+
+### Parameter Space Summary (~299 constants)
+
+| Layer | Source | Count | Trainable? |
+|-------|--------|-------|------------|
+| Physics exponents | `traits.py` | ~35 | No — biological priors (0.75, 0.69) |
+| Threshold constants | `constants.py` | ~94 | Stable inputs — changing them changes behavior semantics |
+| Tunable knobs | `sim_config.json` | ~38 | **Primary targets** — multipliers, buffers, cooldowns |
+| Biome modifiers | `biomes.json` | ~80 (4×20) | Conditional inputs gated by biome ID |
+| Derived params | trait compiler output | ~50 × N_species | Indirectly via traits |
+| World rates | world JSON `rates` key | 10 | **Exposed levers** — already tunable per-world |
+
+**Actionable parameter space: ~48–58 dimensions.**
+
+### Concrete Use Cases
+
+- **Surrogate model for parameter search** — predict ecosystem outcomes from config without running full sim. Enables Bayesian optimization over sim_config.
+- **Learned diffusion (first phase replacement)** — U-Net predicts voxel delta over one diffusion period, or gates physics diffusion when gradients are flat.
+- **Sensitivity analysis / effective dimensionality** — Sobol screening + random forest feature importance to identify which params actually matter vs. dead weight.
+- **Early-warning predictor** — sliding window of telemetry → predict ecosystem collapse K ticks ahead. Enables adaptive tick rate.
+
+### Design Principles
+
+1. Physics is the ground truth — models augment or approximate, never replace physics as training data source
+2. Each phase is independently swappable — swap diffusion without touching flow, guards, or interactions
+3. Telemetry is cheap by default — <5% overhead on tick loop, aggregates over raw per-entity data
+4. BYOM protocol consistency — all learned adapters follow MotorAdapter pattern: context spec → flat float vectors → predictions
+
+**Reference doc:** [`docs/ECOSIM_PARAMETER_TELEMETRY_SPACE.md`](docs/ECOSIM_PARAMETER_TELEMETRY_SPACE.md)
+
+---
+
 ## Pending — Milestone 3: Emergent Dynamics Validation + Trait-Based Search
 
 **Goal:** Validate the trait architecture with long-running simulations of all 8 species. Expand the ASAL search pipeline from rate-tuning (Track A, shipped) to trait-based search (Track B).
@@ -896,6 +965,8 @@ Expand the shipped search pipeline from 17-dim rate tuning to trait-space search
 - **TWO_POOL_NUTRIENT_SPEC.md** — Implementation spec for the two-pool nutrient system. Covers pool dynamics equations, rate constants, voxel manager changes (4→5 layers), every engine touchpoint that reads/writes nutrients, rain split ratios, dormancy recovery update, death→organic_matter deposits, timescale analysis for three recovery scenarios, test plan, and backward compatibility.
 
 - **LILA_ASSET_PIPELINE_CONTEXT.md** — AI-generated 3D asset pipeline research. Covers Flux.1 Schnell → BiRefNet → Hunyuan 3D v2.1 pipeline, deer mesh prototype results, rigging plan. Relevant to Milestone 4 (Godot client).
+
+- **docs/ECOSIM_PARAMETER_TELEMETRY_SPACE.md** — Hybrid model + simulation architecture. Covers telemetry streams (config snapshot, time-series aggregates, event batching), parameter space stratification (~299 constants → ~48 actionable), concrete use cases (surrogate model, learned diffusion, sensitivity analysis, early-warning predictor), and five-phase implementation plan with issue tracking.
 
 ---
 
