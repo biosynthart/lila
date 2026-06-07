@@ -18,7 +18,7 @@
 
 `līlā` is an open-source engine that grows autonomous ecosystems from simple rules. You define species, biomes, and resources — the engine handles hunger cycles, predator-prey loops, soil nutrient flows, water depletion, dormancy, and recovery. Organisms don't follow scripts; their behavior emerges from continuous state variables, hybrid automata guards, and environmental feedback.
 
-> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://hellolifeforms.substack.com/p/the-unseen-hand) for the full argument.
+> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://www.hellolifeforms.com/p/the-unseen-hand) for the full argument.
 
 ### Built for
 
@@ -344,7 +344,7 @@ The project thesis is that the most impactful AI is small, specialized, and invi
 
 The current 2D visualizer shows the engine state: positions, discrete states, soil moisture. The Godot client (v0.1.0) will map those latent vectors to skeletal animation — that's where the thesis becomes visceral. For now, watch the event log and population dynamics. The intelligence is already there; the rendering will catch up.
 
-For the full argument, see ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand) on Substack.
+For the full argument, see ["The Unseen Hand"](https://www.hellolifeforms.com/p/the-unseen-hand).
 
 ## Ecosystem search
 
@@ -356,7 +356,7 @@ The first illumination run searched a 17-dimensional parameter space — rate mu
 
 Each tile is a different ecosystem found by the search — drought-stressed sparse worlds, deer population explosions, plant-dominated high-moisture meadows, balanced mixed communities. None were hand-designed. The search found them by maximizing diversity in CLIP embedding space.
 
-This is currently rate tuning over five fixed species. The **trait-based architecture** (shipped) enables the next step: θ encodes body masses, diets, and thermal tolerances, and the engine derives behavior allometrically. The search becomes "what organisms produce the most interesting ecologies?" — not "what tuning of the same organisms looks different?" For more on the connection between ecological substrates and artificial life search, see ["Life as It Could Be"](https://postcorporate.substack.com/p/life-as-it-could-be).
+This is currently rate tuning over five fixed species. The **trait-based architecture** (shipped) enables the next step: θ encodes body masses, diets, and thermal tolerances, and the engine derives behavior allometrically. The search becomes "what organisms produce the most interesting ecologies?" — not "what tuning of the same organisms looks different?" For more on the connection between ecological substrates and artificial life search, see ["Life as It Could Be"](https://www.hellolifeforms.com/p/life-as-it-could-be).
 
 ```bash
 # Run illumination search

@@ -13,7 +13,7 @@
 
 līlā is a BYOM (Bring Your Own Model) ecosystem simulation engine. Users define a world in JSON — species, biome, soil, water — and the engine grows an autonomous ecosystem from simple rules. The server runs the hybrid automaton (ecology, physics, ML inference); clients render the result via WebSocket at 10 Hz.
 
-The project thesis — explored in ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand) — is that the most impactful AI is small, specialized, and invisible. Tiny ML models guide lifelike motion and behavior; the user never sees inference happening, they just see a world that feels alive.
+The project thesis — explored in ["The Unseen Hand"](https://www.hellolifeforms.com/p/the-unseen-hand) — is that the most impactful AI is small, specialized, and invisible. Tiny ML models guide lifelike motion and behavior; the user never sees inference happening, they just see a world that feels alive.
 
 The name comes from the Sanskrit concept of [līlā](https://www.embodiedphilosophy.com/what-is-lila/) — the spontaneous, purposeless creative unfolding of reality. There's no win condition. The world plays as itself.
 
@@ -922,8 +922,8 @@ Expand the shipped search pipeline from 17-dim rate tuning to trait-space search
 ## Project Links
 
 - **GitHub:** https://github.com/hellolifeforms/lila
-- **Substack essay:** https://postcorporate.substack.com/p/the-unseen-hand
-- **Series:** "The Geometry Beneath" on postcorporate.substack.com
+- **Essay:** https://www.hellolifeforms.com/p/the-unseen-hand
+- **Series:** "The Geometry Beneath" on www.hellolifeforms.com
 - **Bluesky:** https://bsky.app/profile/hellolifeforms.bsky.social
 - **līlā concept:** https://www.embodiedphilosophy.com/what-is-lila/
 - **ASAL:** https://asal.sakana.ai/
