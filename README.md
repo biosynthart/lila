@@ -89,8 +89,8 @@ A world is a JSON file describing the environment, the rate multipliers that gov
   "model":   { "adapter": "mlp", "seed": 42 },
 
   "rates": {
-    "consumption": 3.0, "hunger": 2.5, "thirst": 2.0,
-    "growth": 0.6, "reproduction": 2.0, "water_replenishment": 0.4
+    "consumption": 4.0, "hunger": 1.0, "thirst": 1.0,
+    "growth": 0.6, "reproduction": 1.0, "water_replenishment": 0.4
   },
 
   "randomize": {
@@ -100,7 +100,7 @@ A world is a JSON file describing the environment, the rate multipliers that gov
 
   "entities": [
     { "id": "deer_01",    "type": "ANIMAL", "species": "deer",         "position": [16.0, 0.0, 14.0] },
-    { "id": "butterfly_01", "type": "INSECT", "species": "monarch",    "position": [10.0, 0.0,  8.0] },
+    { "id": "butterfly_01", "type": "INSECT", "species": "butterfly", "position": [10.0, 0.0,  8.0] },
     { "id": "oak_01",     "type": "TREE",   "species": "meadow_oak",   "position": [ 8.0, 0.0,  8.0] },
     { "id": "grass_01",   "type": "PLANT",  "species": "meadow_grass", "position": [12.0, 0.0, 12.0] },
     { "id": "flower_01",  "type": "PLANT",  "species": "wildflower",   "position": [11.0, 0.0,  6.0] }
@@ -172,7 +172,7 @@ See [`server/examples/`](server/examples/) for the full demo and additional pres
     │              ...or bring your own        │
     │                                          │
     │   voxels ─── sparse 3D grid (5 layers)   │
-    │              nutrients_fast, slow,       │
+    │              nutrients_fast, slow ✅     │
     │              moisture, temperature,      │
     │              organic matter              │
     └──────────────────────────────────────────┘
@@ -381,9 +381,11 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
 - Actor effects architecture — immutable EffectBus with flow/guard/interaction/movement actors
 - MovementActor — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects
-- Engine decomposition — LayoutManager, SpatialIndex, MovementSystem, MovementActor
+- Engine decomposition — LayoutManager, SpatialIndex, MovementSystem, MovementActor, EnvironmentManager
 - VoxelGrid protocol + UniformVoxelGrid with `query_overlap()` and `walk_layer()`
 - World-process handlers dispatched through EffectBus (evaporation, water replenish, soil drain/deposit)
+- Two-pool soil nutrient system — fast/slow pools with mineralization, dissolution, leaching fluxes
+- Simulation config loader (`config.py`) — tunable params from JSON, override via `sim_config.json`
 - Universal constants module (`constants.py`) — single source of truth for all simulation physics
 - Pollinator dispersal mechanics — per-flower caps, visit limits, wander cooldowns, post-visit cooldowns
 - ASAL substrate protocol — `Init(θ) / Step(θ) / Render(θ)` wrapping ecosim
@@ -392,9 +394,8 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - Simulation atlas — UMAP projection of discovered ecosystems
 
 **Near-term:**
-- Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition) — *next*
 - Spatial hash for O(1) neighbor queries (SpatialIndex strategy swap)
-- Calibration & regression testing (2000-tick baseline comparison)
+- Calibration & regression testing (2000-tick baseline with two-pool nutrients)
 - Emergent dynamics validation with 8 species (trophic cascades, Lotka-Volterra oscillations)
 - Trait-based search — θ encodes organism traits, not just rate multipliers
 - Target search — CMA-ES optimization toward text prompts via CLIP

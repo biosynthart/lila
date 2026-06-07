@@ -86,11 +86,13 @@ lila/
 │   ├── uv.lock                     # deterministic dependency lockfile
 │   ├── ecosim/                     # core simulation library
 │   │   ├── __init__.py
-│   │   ├── engine.py               # hybrid automaton (trait-based, actor-driven)
+│   │   ├── engine.py               # hybrid automaton (trait-based, actor-driven, ~737 lines)
 │   │   ├── entities.py             # entity schemas, init_entity()
 │   │   ├── biome.py                # biome presets → BiomeConfig
-│   │   ├── voxel_manager.py        # VoxelGrid protocol + UniformVoxelGrid (multi-resolution ready)
-│   │   ├── world_processes.py      # World-process handlers (evaporation, water replenish, soil drain/deposit)
+│   │   ├── config.py               # [M2] SIM_CONFIG loader — tunable params from JSON
+│   │   ├── voxel_manager.py        # [M2] VoxelGrid protocol + UniformVoxelGrid (5 layers: nutrients_fast/slow, moisture, temp, OM)
+│   │   ├── world_processes.py      # World-process handlers (evaporation, water replenish, soil drain/deposit, nutrient pool dynamics)
+│   │   ├── environment_manager.py  # [M2] Environment state — biome, climate, voxels, water sources, rain
 │   │   ├── model_adapter.py        # MotorAdapter protocol, ContextSpec
 │   │   ├── worker.py               # async WS tick loop + HTTP viz server
 │   │   ├── traits.py               # [M2] TraitVector, allometric derivations
@@ -112,16 +114,21 @@ lila/
 │   │       ├── mlp.py              # reference MLP (~500 params, pure Python)
 │   │       ├── static.py           # hand-tuned latent per state
 │   │       └── random.py           # random latents for testing
+│   ├── config/
+│   │   ├── sim_config.json         # tunable simulation parameters (overrides defaults)
+│   │   └── biomes.json             # biome preset definitions
 │   ├── examples/
-│   │   ├── demo_world.json         # temperate meadow with randomization
+│   │   ├── demo_world.json         # temperate meadow with randomization (updated rates, butterfly species)
 │   │   └── temperate_meadow_8sp.json # [M3] 8-species trait-based world
 │   ├── tests/
 │   │   ├── smoke_test.py           # 50-tick integration test
-│   │   ├── test_actors.py          # [M3] EffectBus + effect priority tests (18)
+│   │   ├── test_actors.py          # [M3] EffectBus + effect priority tests (70)
 │   │   ├── test_ecosim.py          # unit tests (12 tests)
 │   │   ├── test_traits.py          # [M2] allometric derivation tests (54)
-│   │   └── test_movement_actor.py  # [M3] movement actor behavior tests (36)
-│   │   └── test_voxel_grid.py    # VoxelGrid protocol + query_overlap/walk_layer (28 tests)
+│   │   ├── test_movement_actor.py  # [M3] movement actor behavior tests (36)
+│   │   ├── test_voxel_grid.py      # VoxelGrid protocol + query_overlap/walk_layer (28 tests)
+│   │   ├── test_nutrients.py       # [M2] two-pool nutrient flow tests (~20)
+│   │   └── test_reproduction_actor.py  # reproduction actor behavior tests (~15)
 │   └── weights/
 │       └── (motion_v0.json)        # placeholder for trained weights
 │
@@ -294,7 +301,7 @@ Items marked `[M2]`, `[M3]`, `[M4]` indicate which milestone introduces them.
 
 - **Docker Compose** — single command: `docker compose up --build`
 - **Dockerfile** — python:3.12-slim, `pip install ".[worker]"`
-- **GitHub CI** — pytest (134 tests) + ruff lint, Python 3.11/3.12
+- **GitHub CI** — pytest (163 tests) + ruff lint, Python 3.11/3.12
 - **uv workflow** — `uv sync` for local dev, deterministic lockfile
 - **pyproject.toml** — setuptools backend (Docker-compatible), optional dep groups (worker, gateway, dev, all), ruff/pytest/pyright config, script entry points
 
@@ -382,7 +389,7 @@ Five species, two skeletons, five interaction chains:
 
 ---
 
-## Milestone 2: Trait-Based Architecture ✅ (partial — two-pool nutrients pending)
+## Milestone 2: Trait-Based Architecture ✅
 
 **Goal:** Replace per-species hard-coded rules with functional trait derivations. Split the single nutrient layer into fast/slow pools with mineralization. All existing tests must still pass. The hybrid automaton tick loop does not change.
 
@@ -431,7 +438,7 @@ Runs once at world initialization. Takes list of TraitVectors + BiomeConfig, pro
 
 **Deliverable:** `ecosim/trait_compiler.py` (285 lines) — `TraitCompiler`, `CompiledEcology`, `compile_world()`, `parse_species_from_json()`
 
-### Step 2.6 — Two-Pool Nutrient Refactor ❌ (NEXT)
+### Step 2.6 — Two-Pool Nutrient Refactor ✅
 Split `nutrients` voxel layer into `nutrients_fast` and `nutrients_slow` (voxel layers 4 → 5):
 - **nutrients_fast** (plant-available): quick turnover, depleted by plant growth, refilled by rain and dissolution from slow pool
 - **nutrients_slow** (mineralized reserve): long-term soil health, fed by decomposition of organic_matter, slowly dissolves into fast pool
@@ -446,7 +453,7 @@ Updated touchpoints: rain split (0.020 fast + 0.004 slow), dormancy recovery use
 
 Three new rate multipliers: `mineralization`, `dissolution`, `nutrient_leaching` (all default 1.0).
 
-**Current state:** `voxel_manager.py` still has 4 layers (`"nutrients", "moisture", "temperature", "organic_matter"`). No mineralization/dissolution/leaching fluxes in engine.
+**Deliverable:** Refactored `ecosim/voxel_manager.py` (316 lines) — 5 layers (`"nutrients_fast", "nutrients_slow", "moisture", "temperature", "organic_matter"`), legacy alias `"nutrients"` → `"nutrients_fast"`, inter-pool fluxes via `NutrientPoolDynamicsHandler`. `ecosim/world_processes.py` (399 lines) — NutrientPoolDynamicsHandler + existing handlers. All 163 tests pass.
 
 ### Step 2.7 — Refactor engine.py ✅
 Replaced `if entity["type"] ==` branches with DerivedParams lookups via `self.compiled.*`. Engine dispatches on functional role (consumer/producer/decomposer), never on entity class:
@@ -472,11 +479,11 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 **Deliverable:** `examples/species_definitions.json` — 8 species trait vectors. `demo_world.json` updated with `species_definitions` key.
 
 ### Test Suite ✅
-- **94 → 134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
+- **163 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28) + `test_nutrients.py` (~20) + `test_reproduction_actor.py` (~15)
 - Interaction template tests: herbivory matching/preference, predation with mass ratios, pollination with linger/cooldown, decomposition mineralization boost
 - Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
-- Compiler tests: derived params for all species, interaction matrix population, flee index (empty for 5sp, populated with wolf), diet preferences, decomposer registry
 - JSON parsing: parse_species_from_json, missing key handling, full definitions file
+- Two-pool nutrient flow tests: mineralization, dissolution, leaching fluxes via NutrientPoolDynamicsHandler
 
 ### Step 2.9 — Calibration & Regression Testing ❌
 - [ ] Compare DerivedParams output against audit table (manual verification)
@@ -489,20 +496,24 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 - `ecosim/traits.py` — TraitVector, DerivedParams, allometric derivation functions (417 lines)
 - `ecosim/interactions.py` — InteractionTemplate base + 4 concrete templates (343 lines)
 - `ecosim/trait_compiler.py` — TraitCompiler class (285 lines)
-- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (now ~782 lines after decomposition)
+- Refactored `engine.py` — reads from DerivedParams, dispatches on functional role (~737 lines after decomposition)
+- `ecosim/config.py` — SIM_CONFIG loader with JSON override support (136 lines)
+- `ecosim/environment_manager.py` — Environment state encapsulation (biome, climate, voxels, water sources, rain)
+- Refactored `voxel_manager.py` — 5 layers (nutrients_fast/slow, moisture, temp, OM), legacy alias support (316 lines)
+- Updated `world_processes.py` — NutrientPoolDynamicsHandler + existing handlers (399 lines)
+- `config/sim_config.json` + `config/biomes.json` — external override files
 - `examples/species_definitions.json` — 8 species trait vectors
-- Updated `examples/demo_world.json` — includes `species_definitions` key
-- `tests/test_actors.py` — 18 tests for EffectBus, effect priority, conflict resolution
+- Updated `examples/demo_world.json` — includes `species_definitions`, updated rates, butterfly species rename
+- `tests/test_actors.py` — 70 tests for EffectBus, effect priority, conflict resolution
 - `tests/test_traits.py` — 54 tests for derivations, templates, compiler, backward compat
+- `tests/test_nutrients.py` — two-pool nutrient flow tests (mineralization, dissolution, leaching)
+- `tests/test_reproduction_actor.py` — reproduction actor behavior tests
 
-**Pending (blocked on Step 2.6):**
-- Refactored `voxel_manager.py` — 5 layers, inter-pool fluxes, death deposits
-- Updated `examples/demo_world.json` — 3 new rate multipliers (`mineralization`, `dissolution`, `nutrient_leaching`)
-- `tests/test_nutrients.py` — two-pool nutrient flow tests
+**Pending:**
 - `tests/test_regression.py` — 2000-tick baseline comparison
 - `docs/trait_species_guide.md` — how to add species via trait vectors
 
-**New files: 4. Modified files: 4. No new external dependencies.**
+**New files: 7 (config.py, environment_manager.py, config/sim_config.json, config/biomes.json, test_nutrients.py, test_reproduction_actor.py, species_definitions.json). Modified files: 6. No new external dependencies.**
 
 ---
 
@@ -567,7 +578,7 @@ will fail at init with a clear error — there is no fallback.
 The legacy inline functions (_flow_animal, _flow_plant, etc.) were removed in favor of the actor system. All worlds now require `species_definitions` and use trait-based actors exclusively.
 
 ### Test Suite ✅
-- **134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
+- **163 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
 - Smoke test shows state variables evolving correctly for both trait and legacy worlds
 - Bee colony transitions to FORAGING, events fire, entities move toward targets
 
@@ -596,16 +607,28 @@ The monolithic engine has been decomposed into focused modules:
 - **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection as pure-function actor emitting SetTarget/ClearTarget effects
 - **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine
 
-**Result:** `engine.py` reduced from ~1338 → 782 lines. Test suite: 94 → 134 tests.
+**Result:** `engine.py` reduced from ~1338 → 782 lines. Test suite: 94 → 163 tests.
 
 ---
 
 ## Recent Changes (Post Phase 2)
 
-### Constants Module (`ecosim/constants.py`, 132 lines) ✅
+### Simulation Config Loader (`ecosim/config.py`, 136 lines) ✅
+Extracted all tunable simulation parameters from hardcoded values in actors, interactions, engine, and world processes into a structured config system. `SIM_CONFIG` is loaded at import time from defaults, overridable via `config/sim_config.json`.
+
+**Config domains:** consumer_physiology, plant_physiology, soil_dynamics, decomposer_physiology, movement, reproduction, interactions (mass ratio windows, pollination params), engine_defaults.
+
+**Deliverable:** `ecosim/config.py` (136 lines) — `load_sim_config()`, `_deep_merge()`, `SIM_CONFIG` singleton. `config/sim_config.json` and `config/biomes.json` for external overrides.
+
+### Environment Manager (`ecosim/environment_manager.py`, ~180 lines) ✅
+Encapsulates the physical environment of an ecosystem: biome config, climate state, voxel grid, water source management. Provides unified interface for environmental updates (rain, evaporation, water distribution). LayoutManager is called internally via `load_layout()`.
+
+**Deliverable:** `ecosim/environment_manager.py` — `EnvironmentManager` class with `load_layout()`, `add_water_source()`, `apply_rain()` methods. Rain now splits nutrient boost between fast/slow pools.
+
+### Constants Module (`ecosim/constants.py`, 158 lines) ✅
 Extracted all numeric simulation constants from `engine.py` and actor files into a single source of truth module. Every constant used by the engine — drinking rates, reproductive thresholds, plant physiology, pollination distances, water physics, rain parameters, soil evaporation — now lives in one place. No module defines its own copies.
 
-**Deliverable:** `ecosim/constants.py` (132 lines) — 60+ constants organized by domain (drinking, reproduction, stress, plant physiology, spreading, dormancy, collapse, pollination, predation, movement, dispersal, child inheritance, water, rain, soil evaporation, organic matter, decomposition)
+**Deliverable:** `ecosim/constants.py` (158 lines) — 60+ constants organized by domain (drinking, reproduction, stress, plant physiology, spreading, dormancy, collapse, pollination, predation, movement, dispersal, child inheritance, water, rain with fast/slow nutrient splits, soil evaporation, organic matter, decomposition, mineralization, dissolution, leaching)
 
 ### SetEntityAttr Effect Type ✅
 New effect type for entity-level attributes that live on the entity dict rather than in `state_vars`. Used for internal tracking variables like `_pollination_cooldown`, `_pollination_visits`, `_wander_cooldown`.
@@ -638,10 +661,10 @@ The monolithic engine has been decomposed into focused modules:
 - **MovementActor** (`actors/movement_actors.py`, 492 lines) — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects. Priority chain: swarming → drinking → mate-seeking → foraging → hunting → idle pollinator → wander. Integrated into ConsumerFlowActor.resolve().
 - **Dead code removal** — ~347 lines of deprecated movement logic stripped from engine (_pick_movement_target, _find_nearest_food_by_preference, _find_nearest_prey, etc.) superseded by MovementActor.
 
-**Result:** `engine.py` reduced from ~2465 → 782 lines. All 134 tests pass.
+**Result:** `engine.py` reduced from ~2465 → 782 lines. All 163 tests pass.
 
 ### Test Suite ✅
-- **134 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
+- **163 tests passing** across `test_actors.py` (70) + `test_ecosim.py` (12) + `test_traits.py` (54) + `test_movement_actor.py` (36) + `test_voxel_grid.py` (28)
 - New pollinator dispersal tests: per-flower cap, visit limit enforcement, wander cooldown, post-visit cooldown
 - SetEntityAttr effect application tests
 
