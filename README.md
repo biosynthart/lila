@@ -18,7 +18,7 @@
 
 `līlā` is an open-source engine that grows autonomous ecosystems from simple rules. You define species, biomes, and resources — the engine handles hunger cycles, predator-prey loops, soil nutrient flows, water depletion, dormancy, and recovery. Organisms don't follow scripts; their behavior emerges from continuous state variables, hybrid automata guards, and environmental feedback.
 
-> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://hellolifeforms.substack.com/p/the-unseen-hand) for the full argument.
+> **What you see right now is a 2D debug visualizer** — a window into the engine's state, not the final form. The engine is the product: a headless simulation server that streams tick packets over WebSocket to any client. A 3D Godot client with skeletal animation is planned for v0.1.0. The thesis isn't pretty graphics — it's that tiny ML models, invisible to the user, make a world feel alive. See ["The Unseen Hand"](https://www.hellolifeforms.com/p/the-unseen-hand) for the full argument.
 
 ### Built for
 
@@ -89,8 +89,8 @@ A world is a JSON file describing the environment, the rate multipliers that gov
   "model":   { "adapter": "mlp", "seed": 42 },
 
   "rates": {
-    "consumption": 3.0, "hunger": 2.5, "thirst": 2.0,
-    "growth": 0.6, "reproduction": 2.0, "water_replenishment": 0.4
+    "consumption": 4.0, "hunger": 1.0, "thirst": 1.0,
+    "growth": 0.6, "reproduction": 1.0, "water_replenishment": 0.4
   },
 
   "randomize": {
@@ -100,7 +100,7 @@ A world is a JSON file describing the environment, the rate multipliers that gov
 
   "entities": [
     { "id": "deer_01",    "type": "ANIMAL", "species": "deer",         "position": [16.0, 0.0, 14.0] },
-    { "id": "butterfly_01", "type": "INSECT", "species": "monarch",    "position": [10.0, 0.0,  8.0] },
+    { "id": "butterfly_01", "type": "INSECT", "species": "butterfly", "position": [10.0, 0.0,  8.0] },
     { "id": "oak_01",     "type": "TREE",   "species": "meadow_oak",   "position": [ 8.0, 0.0,  8.0] },
     { "id": "grass_01",   "type": "PLANT",  "species": "meadow_grass", "position": [12.0, 0.0, 12.0] },
     { "id": "flower_01",  "type": "PLANT",  "species": "wildflower",   "position": [11.0, 0.0,  6.0] }
@@ -172,7 +172,7 @@ See [`server/examples/`](server/examples/) for the full demo and additional pres
     │              ...or bring your own        │
     │                                          │
     │   voxels ─── sparse 3D grid (5 layers)   │
-    │              nutrients_fast, slow,       │
+    │              nutrients_fast, slow ✅     │
     │              moisture, temperature,      │
     │              organic matter              │
     └──────────────────────────────────────────┘
@@ -344,7 +344,7 @@ The project thesis is that the most impactful AI is small, specialized, and invi
 
 The current 2D visualizer shows the engine state: positions, discrete states, soil moisture. The Godot client (v0.1.0) will map those latent vectors to skeletal animation — that's where the thesis becomes visceral. For now, watch the event log and population dynamics. The intelligence is already there; the rendering will catch up.
 
-For the full argument, see ["The Unseen Hand"](https://postcorporate.substack.com/p/the-unseen-hand) on Substack.
+For the full argument, see ["The Unseen Hand"](https://www.hellolifeforms.com/p/the-unseen-hand).
 
 ## Ecosystem search
 
@@ -356,7 +356,7 @@ The first illumination run searched a 17-dimensional parameter space — rate mu
 
 Each tile is a different ecosystem found by the search — drought-stressed sparse worlds, deer population explosions, plant-dominated high-moisture meadows, balanced mixed communities. None were hand-designed. The search found them by maximizing diversity in CLIP embedding space.
 
-This is currently rate tuning over five fixed species. The **trait-based architecture** (shipped) enables the next step: θ encodes body masses, diets, and thermal tolerances, and the engine derives behavior allometrically. The search becomes "what organisms produce the most interesting ecologies?" — not "what tuning of the same organisms looks different?" For more on the connection between ecological substrates and artificial life search, see ["Life as It Could Be"](https://postcorporate.substack.com/p/life-as-it-could-be).
+This is currently rate tuning over five fixed species. The **trait-based architecture** (shipped) enables the next step: θ encodes body masses, diets, and thermal tolerances, and the engine derives behavior allometrically. The search becomes "what organisms produce the most interesting ecologies?" — not "what tuning of the same organisms looks different?" For more on the connection between ecological substrates and artificial life search, see ["Life as It Could Be"](https://www.hellolifeforms.com/p/life-as-it-could-be).
 
 ```bash
 # Run illumination search
@@ -381,9 +381,11 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - 8 species defined as trait vectors (deer, butterfly, oak, grass, wildflower, wolf, songbird, mushroom)
 - Actor effects architecture — immutable EffectBus with flow/guard/interaction/movement actors
 - MovementActor — target selection extracted from engine into pure-function actor emitting SetTarget/ClearTarget effects
-- Engine decomposition — LayoutManager, SpatialIndex, MovementSystem, MovementActor
+- Engine decomposition — LayoutManager, SpatialIndex, MovementSystem, MovementActor, EnvironmentManager
 - VoxelGrid protocol + UniformVoxelGrid with `query_overlap()` and `walk_layer()`
 - World-process handlers dispatched through EffectBus (evaporation, water replenish, soil drain/deposit)
+- Two-pool soil nutrient system — fast/slow pools with mineralization, dissolution, leaching fluxes
+- Simulation config loader (`config.py`) — tunable params from JSON, override via `sim_config.json`
 - Universal constants module (`constants.py`) — single source of truth for all simulation physics
 - Pollinator dispersal mechanics — per-flower caps, visit limits, wander cooldowns, post-visit cooldowns
 - ASAL substrate protocol — `Init(θ) / Step(θ) / Render(θ)` wrapping ecosim
@@ -392,9 +394,8 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - Simulation atlas — UMAP projection of discovered ecosystems
 
 **Near-term:**
-- Two-pool soil nutrient system (fast/slow pools, mineralization, decomposition) — *next*
 - Spatial hash for O(1) neighbor queries (SpatialIndex strategy swap)
-- Calibration & regression testing (2000-tick baseline comparison)
+- Calibration & regression testing (2000-tick baseline with two-pool nutrients)
 - Emergent dynamics validation with 8 species (trophic cascades, Lotka-Volterra oscillations)
 - Trait-based search — θ encodes organism traits, not just rate multipliers
 - Target search — CMA-ES optimization toward text prompts via CLIP

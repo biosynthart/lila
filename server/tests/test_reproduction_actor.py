@@ -155,7 +155,7 @@ def make_plant_context(
     vg.world_to_grid.return_value = (16, 0, 16)
     vg.get.side_effect = lambda layer, x, y, z: {
         "moisture": 0.4,
-        "nutrients": 0.3,
+        "nutrients_fast": 0.3,
     }.get(layer, 0.0)
     ctx.voxel_grid = vg
 

@@ -13,14 +13,21 @@
 # limitations under the License.
 
 """
-Biome configuration for the līlā ecosystem simulation.
+Biome configuration for the l\u012bl\u0101 ecosystem simulation.
 
 Maps biome identifiers to concrete simulation constants that drive the
 hybrid automaton's flow equations. Each biome defines environmental
 modifiers that affect metabolism, evaporation, growth rates, and
 state transition thresholds.
+
+Preset values are loaded from ``biomes.json`` alongside this module.
+Custom biomes can be registered at runtime via ``register_biome()``.
 """
 
+from __future__ import annotations
+
+import json
+import pathlib
 from dataclasses import dataclass
 
 
@@ -28,87 +35,95 @@ from dataclasses import dataclass
 class BiomeConfig:
     """Immutable set of simulation constants derived from a biome type."""
 
-    # Metabolism modifiers (multiplied against base entity rates)
+    # ── Metabolism modifiers (multiplied against base entity rates) ────
     hunger_rate_modifier: float = 1.0
     energy_drain_modifier: float = 1.0
 
-    # Water cycle
+    # ── Water cycle ────────────────────────────────────────────────────
     evaporation_rate: float = 0.05
     rainfall_recharge: float = 0.02
 
-    # Plant growth
+    # ── Plant growth ───────────────────────────────────────────────────
     growth_rate_modifier: float = 1.0
     light_availability: float = 0.8
 
-    # Soil dynamics
+    # ── Soil dynamics ──────────────────────────────────────────────────
     decomposition_rate: float = 0.01
     nutrient_diffusion_rate: float = 0.005
 
-    # Microorganism activity
+    # ── Microorganism activity ─────────────────────────────────────────
     microbial_activity_modifier: float = 1.0
 
-    # Temperature effect on all metabolic processes
+    # ── Temperature effect on all metabolic processes ──────────────────
     # Values > 1.0 speed things up, < 1.0 slow them down
     metabolic_scaling: float = 1.0
 
+    # ═══════════════════════════════════════════════════════════════════
+    # Environment-dependent thresholds (vary by biome)
+    # ═══════════════════════════════════════════════════════════════════
 
-# Biome presets keyed by the biome string from the world definition.
-# These are intentionally tuned to produce visibly different ecosystem
-# behaviors — a tropical forest should feel lush and fast, an arctic
-# one should feel slow and punishing.
+    # Consumer dormancy: soil moisture level that wakes dormant consumers.
+    # Desert organisms need more moisture to wake; arctic less.
+    dormant_consumer_moisture_wake: float = 0.25
 
-BIOME_PRESETS: dict[str, BiomeConfig] = {
-    "TROPICAL": BiomeConfig(
-        hunger_rate_modifier=1.0,
-        energy_drain_modifier=0.8,
-        evaporation_rate=0.06,
-        rainfall_recharge=0.04,
-        growth_rate_modifier=1.5,
-        light_availability=0.9,
-        decomposition_rate=0.02,
-        nutrient_diffusion_rate=0.008,
-        microbial_activity_modifier=1.4,
-        metabolic_scaling=1.2,
-    ),
-    "TEMPERATE": BiomeConfig(
-        hunger_rate_modifier=1.0,
-        energy_drain_modifier=1.0,
-        evaporation_rate=0.04,
-        rainfall_recharge=0.025,
-        growth_rate_modifier=1.0,
-        light_availability=0.7,
-        decomposition_rate=0.01,
-        nutrient_diffusion_rate=0.005,
-        microbial_activity_modifier=1.0,
-        metabolic_scaling=1.0,
-    ),
-    "ARCTIC": BiomeConfig(
-        hunger_rate_modifier=1.6,
-        energy_drain_modifier=1.5,
-        evaporation_rate=0.015,
-        rainfall_recharge=0.005,
-        growth_rate_modifier=0.3,
-        light_availability=0.4,
-        decomposition_rate=0.003,
-        nutrient_diffusion_rate=0.002,
-        microbial_activity_modifier=0.3,
-        metabolic_scaling=0.6,
-    ),
-    "DESERT": BiomeConfig(
-        hunger_rate_modifier=1.3,
-        energy_drain_modifier=1.2,
-        evaporation_rate=0.12,
-        rainfall_recharge=0.002,
-        growth_rate_modifier=0.4,
-        light_availability=1.0,
-        decomposition_rate=0.005,
-        nutrient_diffusion_rate=0.003,
-        microbial_activity_modifier=0.4,
-        metabolic_scaling=1.1,
-    ),
-}
+    # Plant dormancy recovery multipliers — how fast health/hydration rebuilds
+    # when soil conditions improve. Tropical recovers quickly, arctic slowly.
+    plant_dormancy_recovery_health_multiplier: float = 10.0
+    plant_dormancy_recovery_hydration_multiplier: float = 13.0
+    plant_dormancy_recovery_health_floor: float = 0.015
+
+    # Decomposer dynamics — cold biomes have slower activity response and
+    # lower population growth rates.
+    decomposer_activity_smoothing_factor: float = 0.1
+    decomposer_population_growth_rate: float = 0.005
+    decomposer_population_decay_rate: float = 0.003
+
+    # Water physics outside source footprint — desert soil dries much faster
+    # and has a lower natural moisture floor.
+    soil_dry_rate_outside_footprint: float = 0.02
+    soil_moisture_floor_outside_water: float = 0.3
 
 
-def get_biome_config(biome: str) -> BiomeConfig:
-    """Look up a biome preset, falling back to TEMPERATE for unknown biomes."""
-    return BIOME_PRESETS.get(biome.upper(), BIOME_PRESETS["TEMPERATE"])
+# ── Default fallback (TEMPERATE-equivalent) ────────────────────────────────
+_DEFAULT_BIOME = BiomeConfig()
+
+# Runtime registry — populated from biomes.json at module load time, plus any
+# custom biomes registered programmatically.
+_BIOME_REGISTRY: dict[str, BiomeConfig] = {}
+
+
+def _load_builtin_biomes() -> None:
+    """Load biome presets from biomes.json into the registry."""
+    # Resolve relative to server/ root, not the ecosim package dir
+    json_path = pathlib.Path(__file__).resolve().parent.parent / "config" / "biomes.json"
+    if not json_path.is_file():
+        # Fall back to hardcoded TEMPERATE default only.
+        _BIOME_REGISTRY["TEMPERATE"] = _DEFAULT_BIOME
+        return
+
+    with open(json_path) as f:
+        data = json.load(f)
+
+    for name, values in data.items():
+        if name.startswith("_"):
+            continue  # skip comments / metadata keys
+        _BIOME_REGISTRY[name.upper()] = BiomeConfig(**values)
+
+
+# Populate registry at import time.
+_load_builtin_biomes()
+
+
+def register_biome(name: str, config: BiomeConfig) -> None:
+    """Register a custom biome preset at runtime.
+
+    Args:
+        name: Biome identifier (case-insensitive).
+        config: BiomeConfig instance with the desired parameters.
+    """
+    _BIOME_REGISTRY[name.upper()] = config
+
+
+def get_biome_config(biome_name: str) -> BiomeConfig:
+    """Look up a biome preset, falling back to defaults for unknown biomes."""
+    return _BIOME_REGISTRY.get(biome_name.upper(), _DEFAULT_BIOME)

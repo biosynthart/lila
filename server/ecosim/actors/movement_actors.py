@@ -22,6 +22,7 @@ import math
 import random
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     ARRIVAL_THRESHOLD,
     DEHYDRATION_HYDRATION,
@@ -77,9 +78,13 @@ class MovementActor:
 
         state = ctx.entity["state"]
         pos = ctx.entity["position"]
-        # grid_max: prefer explicit context field, fall back to default
+        # grid_max: prefer explicit context field, fall back to config default
         grid_max_raw = getattr(ctx, "_grid_max", None)
-        grid_max = grid_max_raw if isinstance(grid_max_raw, (int, float)) else 31.0
+        grid_max = (
+            grid_max_raw
+            if isinstance(grid_max_raw, (int, float))
+            else SIM_CONFIG["movement"]["grid_max_default"]
+        )
 
         # ── SWARMING — colony under stress, seek water for survival ──
         if state == "SWARMING":
@@ -241,10 +246,12 @@ class MovementActor:
         for other in nearby_entities:
             if other["state"] in ("DEAD", "DYING", "DORMANT"):
                 continue
-            if other.get("state_vars", {}).get("growth", 1.0) <= 0.1:
+            growth_threshold = SIM_CONFIG["movement"]["food_growth_viability_threshold"]
+            if other.get("state_vars", {}).get("growth", 1.0) <= growth_threshold:
                 continue
             d = _distance(pos, other["position"])
-            if d < 1.0 or d > search_range * 2:
+            min_dist = SIM_CONFIG["movement"]["mate_minimum_distance"]
+            if d < min_dist or d > search_range * 2:
                 continue
             other_species = other.get("species", "")
             for target_species, pref in diet_order:
@@ -304,8 +311,9 @@ class MovementActor:
             if _count_pollinators_at_flower(other["position"], nearby_entities) >= POLLINATOR_MAX_PER_FLOWER:
                 continue
             # Skip flowers too close — prevents re-targeting the same flower after arrival
+            arrive_mult = SIM_CONFIG["movement"]["arrival_threshold_double"]
             d = _distance(pos, other["position"])
-            if d < ARRIVAL_THRESHOLD * 2 or d > search_range:
+            if d < ARRIVAL_THRESHOLD * arrive_mult or d > search_range:
                 continue
             if d < best_dist:
                 best_dist, best_pos = d, list(other["position"])
@@ -342,8 +350,9 @@ class MovementActor:
             if _count_pollinators_at_flower(other["position"], nearby_entities) >= POLLINATOR_MAX_PER_FLOWER:
                 continue
             # Skip flowers too close — prevents re-targeting after arrival
+            arrive_mult = SIM_CONFIG["movement"]["arrival_threshold_double"]
             d = _distance(pos, other["position"])
-            if d < ARRIVAL_THRESHOLD * 2 or d > search_range:
+            if d < ARRIVAL_THRESHOLD * arrive_mult or d > search_range:
                 continue
             if d < best_dist:
                 best_dist, best_pos = d, list(other["position"])
@@ -361,6 +370,7 @@ class MovementActor:
         best_pos: list[float] | None = None
 
         all_entities = getattr(ctx, "_entities", {})
+        min_dist = SIM_CONFIG["movement"]["mate_minimum_distance"]
         for other in all_entities.values():
             if other["id"] == entity["id"]:
                 continue
@@ -371,7 +381,7 @@ class MovementActor:
             if other.get("species") != entity.get("species"):
                 continue
             d = _distance(entity["position"], other["position"])
-            if d < 1.0:
+            if d < min_dist:
                 continue  # Already next to them
             if d < best_dist:
                 best_dist, best_pos = d, list(other["position"])
@@ -398,10 +408,12 @@ class MovementActor:
         dx = best["position"][0] - pos[0]
         dz = best["position"][2] - pos[2]
         dist = math.sqrt(dx * dx + dz * dz)
-        if dist < 0.1:
+        min_water_dist = SIM_CONFIG["movement"]["water_source_min_distance"]
+        if dist < min_water_dist:
             return list(best["position"])
 
-        r = best.get("radius", 1.0) * 0.5
+        approach_factor = SIM_CONFIG["movement"]["water_approach_radius_factor"]
+        r = best.get("radius", 1.0) * approach_factor
         return [best["position"][0] - (dx / dist) * r, 0.0,
                 best["position"][2] - (dz / dist) * r]
 
@@ -411,14 +423,15 @@ class MovementActor:
         for source in water_sources:
             if source.get("water_level", 1.0) < WATER_DRY_THRESHOLD:
                 continue
-            if _distance(pos, source["position"]) <= source.get("radius", 1.0) + 1.0:
+            near_buffer = SIM_CONFIG["consumer_physiology"]["near_water_distance_buffer"]
+            if _distance(pos, source["position"]) <= source.get("radius", 1.0) + near_buffer:
                 return True
         return False
 
     @staticmethod
     def _clamp_to_grid(pos: list[float], grid_max: float) -> list[float]:
         """Generate a random wander target clamped to grid bounds with margin."""
-        margin = 0.5
+        margin = SIM_CONFIG["movement"]["wander_grid_margin"]
         lo, hi = margin, grid_max - margin
         return [
             max(lo, min(hi, pos[0] + random.uniform(-WANDER_RANGE, WANDER_RANGE))),

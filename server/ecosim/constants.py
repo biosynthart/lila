@@ -105,7 +105,12 @@ WATER_DRY_THRESHOLD = 0.05      # sources below this are considered dry
 
 # ── Rain ──────────────────────────────────────────────────────────────────────
 RAIN_MOISTURE_BOOST = 0.3       # soil moisture increase × intensity
-RAIN_NUTRIENT_BOOST = 0.03      # soil nutrient increase × intensity
+# Nutrient rain is split between fast (immediately available) and slow pools.
+# Total preserved: RAIN_NUTRIENT_FAST_BOOST + RAIN_NUTRIENT_SLOW_BOOST ≈ old RAIN_NUTRIENT_BOOST
+RAIN_NUTRIENT_FAST_BOOST = 0.025   # ~83% — dissolved mineral input to fast pool
+RAIN_NUTRIENT_SLOW_BOOST = 0.005   # ~17% — particulate deposition to slow pool
+# Kept for backward-compat calculation (sum of the two above)
+RAIN_NUTRIENT_BOOST = 0.03      # soil nutrient increase × intensity (legacy total)
 RAIN_WATER_SOURCE_BOOST = 0.4   # water source level increase × intensity
 RAIN_SUPPRESSION_TICKS = 80     # ticks of suppressed evaporation after rain
 RAIN_PLANT_HYDRATION = 0.2      # direct plant hydration boost × intensity
@@ -137,8 +142,15 @@ OM_DEPOSIT_SCALE = 0.15         # body mass → organic matter conversion
 OM_DEPOSIT_MIN = 0.002          # minimum deposit for any entity
 OM_DEPOSIT_MAX = 0.5            # maximum deposit per cell
 
-# ── Decomposition ─────────────────────────────────────────────────────────────
-DECOMP_NUTRIENT_EFFICIENCY = 0.8  # fraction of organic matter → nutrients
+# ── Two-pool nutrient dynamics ────────────────────────────────────────────────
+# Mineralization: organic_matter → nutrients_slow (background microbial)
+MINERALIZATION_RATE = 0.002   # per tick (half-life ~350 ticks without decomposers)
+# Dissolution: nutrients_slow → nutrients_fast (background fertility release)
+DISSOLUTION_RATE = 0.005      # per tick (slow pool half-life ~140 ticks)
+# Leaching: nutrients_fast drains slowly (nutrients wash deeper / are lost)
+NUTRIENT_LEACH_RATE = 0.001   # per tick
+# Decomposition efficiency: fraction of organic matter → slow nutrients
+DECOMP_NUTRIENT_EFFICIENCY = 0.8
 
 # ── Active states (entity moves toward targets in these) ──────────────────────
 ACTIVE_MOVEMENT_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "DRINKING", "SWARMING"})

@@ -15,8 +15,9 @@
 """
 Sparse voxel manager for the līlā ecosystem.
 
-Tracks four environmental layers (nutrients, moisture, temperature,
-organic_matter) over a 3D grid. Only voxels that change beyond a
+Tracks five environmental layers
+(nutrients_fast, nutrients_slow, moisture, temperature, organic_matter)
+over a 3D grid. Only voxels that change beyond a
 threshold are flagged as dirty and included in the next tick packet.
 
 Grid coordinates are integer tuples (x, y, z). Layers are stored as
@@ -39,7 +40,15 @@ import math
 from collections.abc import Callable
 from typing import Protocol, runtime_checkable
 
-LAYERS = ("nutrients", "moisture", "temperature", "organic_matter")
+LAYERS = (
+    "nutrients_fast",
+    "nutrients_slow",
+    "moisture",
+    "temperature",
+    "organic_matter",
+)
+# Backward-compat alias: old code referencing "nutrients" maps to fast pool.
+LAYER_NUTRIENTS_ALIAS = {"nutrients": "nutrients_fast"}
 DEFAULT_VALUE = 1.0
 DIRTY_THRESHOLD = 0.05
 
@@ -156,7 +165,11 @@ class UniformVoxelGrid:
     def get(
         self, layer: str, x: int, y: int, z: int,
     ) -> float:
-        """Read a voxel value. Returns DEFAULT_VALUE for unset voxels."""
+        """Read a voxel value. Returns DEFAULT_VALUE for unset voxels.
+
+        Accepts legacy alias ``"nutrients"`` → ``"nutrients_fast"``.
+        """
+        layer = LAYER_NUTRIENTS_ALIAS.get(layer, layer)
         return self._data[layer].get((x, y, z), DEFAULT_VALUE)
 
     def set(
@@ -164,14 +177,24 @@ class UniformVoxelGrid:
     ) -> None:
         """
         Set a voxel value, clamped to [0.0, 1.0].
-        Marks the voxel as dirty if the change exceeds DIRTY_THRESHOLD.
+
+        Always persists the value in ``_data`` so that subsequent reads
+        (e.g. from ``walk_layer``) see the updated state.  Marks the voxel
+        as dirty for client delta packets only when the change exceeds
+        DIRTY_THRESHOLD.
+
+        Accepts legacy alias ``"nutrients"`` → ``"nutrients_fast"``.
         """
+        layer = LAYER_NUTRIENTS_ALIAS.get(layer, layer)
         coord = (x, y, z)
         value = max(0.0, min(1.0, value))
         old = self._data[layer].get(coord, DEFAULT_VALUE)
 
+        # Always persist — small per-tick fluxes must accumulate correctly.
+        self._data[layer][coord] = value
+
+        # Only mark dirty for client delta packets when change is significant.
         if abs(old - value) > DIRTY_THRESHOLD:
-            self._data[layer][coord] = value
             self._dirty[layer][f"{x},{y},{z}"] = round(value, 4)
 
     def add(
@@ -257,19 +280,25 @@ class UniformVoxelGrid:
         Set uniform initial values across the grid from the world
         definition's soil parameters. Only sets non-default values
         to keep the sparse representation efficient.
+
+        Nutrients are split into fast (40%, immediately available) and
+        slow (60%, long-term reserve) pools per the two-pool nutrient model.
         """
         dx, dy, dz = self.dimensions
 
-        # Nutrients: average of N/P/K
+        # Nutrients: average of N/P/K, then split 40/60 into fast/slow pools
         n = soil_config.get("nitrogen", DEFAULT_VALUE)
         p = soil_config.get("phosphorus", DEFAULT_VALUE)
         k = soil_config.get("potassium", DEFAULT_VALUE)
-        nutrient_val = (n + p + k) / 3.0
-        if abs(nutrient_val - DEFAULT_VALUE) > DIRTY_THRESHOLD:
-            for x in range(dx):
-                for y in range(dy):
-                    for z in range(dz):
-                        self._data["nutrients"][(x, y, z)] = nutrient_val
+        base_nutrients = (n + p + k) / 3.0
+        fast_val = base_nutrients * 0.4   # immediately available
+        slow_val = base_nutrients * 0.6   # long-term reserve
+        for layer, val in (("nutrients_fast", fast_val), ("nutrients_slow", slow_val)):
+            if abs(val - DEFAULT_VALUE) > DIRTY_THRESHOLD:
+                for x in range(dx):
+                    for y in range(dy):
+                        for z in range(dz):
+                            self._data[layer][(x, y, z)] = val
 
         # Moisture and organic_matter: direct from soil config
         for soil_key, layer in (("moisture", "moisture"), ("organic_matter", "organic_matter")):

@@ -20,6 +20,7 @@ from __future__ import annotations
 
 from dataclasses import dataclass
 
+from .config import SIM_CONFIG
 from .constants import POLLINATION_MAX_LINGER
 from .traits import TraitVector
 
@@ -33,18 +34,17 @@ from .traits import TraitVector
 #   ratio = actor_mass / target_mass
 # A ratio of 0.5 means the predator is half the prey's mass.
 # A ratio of 50 means the predator is 50× the prey's mass.
-
+#
+# Loaded from sim_config.json (with defaults in config.py).
+_INTERACTIONS_CFG = SIM_CONFIG["interactions"]
 MASS_RATIO_WINDOWS: dict[str, tuple[float, float]] = {
-    "carnivore":    (0.1, 2.0),     # mammalian predation: predators ≤ 2× prey mass
-    "insectivore":  (1.0, 1000.0),  # insectivory: predator always much larger
-    "omnivore":     (0.1, 100.0),   # broader window for generalist feeders
-    "piscivore":    (0.01, 10.0),   # fish predation: wide range
+    k: tuple(v) for k, v in _INTERACTIONS_CFG["mass_ratio_windows"].items()
 }
 
 # Linger time for pollinators (ticks spent at a flower, inversely ∝ metabolic rate)
-# Hard-capped by POLLINATION_MAX_LINGER in constants.py
-POLLINATION_LINGER_BASE = 20.0      # ticks at reference metabolic rate (deer=1.0)
-POLLINATION_COOLDOWN_TICKS = 50     # ticks before a flower can be re-pollinated
+# Hard-capped by POLLINATION_MAX_LINGER in constants.py.
+POLLINATION_LINGER_BASE = _INTERACTIONS_CFG["pollination_linger_base"]
+POLLINATION_COOLDOWN_TICKS = _INTERACTIONS_CFG["pollination_cooldown_ticks"]
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -127,7 +127,8 @@ class Herbivory(InteractionTemplate):
             interaction_type=self.interaction_type,
             actor_species=actor.species_id,
             target_species=target.species_id,
-            consumption_rate=actor_metabolic_rate * 0.05,
+            consumption_rate=actor_metabolic_rate
+                * _INTERACTIONS_CFG["herbivory_consumption_multiplier"],
             preference_order=pref,
         )
 
@@ -194,15 +195,20 @@ class Predation(InteractionTemplate):
         actor_speed = _approx_speed(actor)
         target_speed = _approx_speed(target)
         if actor_speed + target_speed > 0:
-            capture_prob = min(0.95, actor_speed / (actor_speed + target_speed) + 0.2)
+            capture_prob = min(
+                _INTERACTIONS_CFG["capture_probability_cap"],
+                actor_speed / (actor_speed + target_speed)
+                + _INTERACTIONS_CFG["capture_probability_base_offset"],
+            )
         else:
-            capture_prob = 0.5
+            capture_prob = _INTERACTIONS_CFG["capture_probability_fallback"]
 
         return InteractionParams(
             interaction_type=self.interaction_type,
             actor_species=actor.species_id,
             target_species=target.species_id,
-            consumption_rate=actor_metabolic_rate * 0.1,  # predation yields more per event
+            consumption_rate=actor_metabolic_rate
+                * _INTERACTIONS_CFG["predation_consumption_multiplier"],
             capture_probability=capture_prob,
             flee_trigger=True,
             mass_ratio=ratio,
@@ -255,9 +261,11 @@ class Pollination(InteractionTemplate):
         # Linger time: smaller/faster pollinators spend less time per flower.
         # Use log-scale relationship capped to a reasonable range [5, 50] ticks.
         # At deer-scale BMR (1.0): linger ≈ 20. At butterfly scale: linger ≈ 15-25.
-        if actor_metabolic_rate > 0.001:
-            linger = max(5, min(POLLINATION_MAX_LINGER, int(POLLINATION_LINGER_BASE /
-                                        (actor_metabolic_rate ** 0.3))))
+        if actor_metabolic_rate > _INTERACTIONS_CFG["pollination_metabolic_rate_floor"]:
+            linger = max(5, min(POLLINATION_MAX_LINGER, int(
+                POLLINATION_LINGER_BASE
+                / (actor_metabolic_rate ** _INTERACTIONS_CFG["pollination_linger_exponent"])
+            )))
         else:
             # Very small organisms: use moderate default
             linger = min(POLLINATION_MAX_LINGER, int(POLLINATION_LINGER_BASE))
@@ -300,7 +308,9 @@ class Decomposition(InteractionTemplate):
         """Rates for decomposer ↔ voxel interaction."""
         # Boost scales with metabolic rate — bigger/faster decomposers
         # process organic matter faster
-        boost = max(0.5, actor_metabolic_rate * 5.0) if actor_metabolic_rate > 0 else 1.0
+        boost_min = _INTERACTIONS_CFG["decomposition_boost_min"]
+        boost_scale = _INTERACTIONS_CFG["decomposition_boost_scale"]
+        boost = max(boost_min, actor_metabolic_rate * boost_scale) if actor_metabolic_rate > 0 else 1.0
 
         return InteractionParams(
             interaction_type=self.interaction_type,
@@ -332,14 +342,19 @@ def _approx_speed(traits: TraitVector) -> float:
     """Quick speed estimate for capture probability (avoids circular import).
 
     Uses the same scaling laws as traits.derive_speed but with inline constants.
+    Coefficients loaded from sim_config.json.
     """
     m = traits.body_mass_kg
     if traits.locomotion in ("sessile", "rooted"):
         return 0.0
-    elif traits.locomotion == "flight_insect":
-        return 0.60 * (m ** 0.17)
+    speed_cfg = _INTERACTIONS_CFG["speed_coefficients"]
+    if traits.locomotion == "flight_insect":
+        coeff, exp = speed_cfg["flight_insect"]
+        return coeff * (m ** exp)
     elif traits.locomotion == "flight_bird":
-        return 0.55 * (m ** 0.17)
+        coeff, exp = speed_cfg["flight_bird"]
+        return coeff * (m ** exp)
     elif traits.locomotion in ("quadruped", "biped"):
-        return 0.0502 * (m ** 0.25)
+        coeff, exp = speed_cfg["quadruped"]
+        return coeff * (m ** exp)
     return 0.0

@@ -21,7 +21,8 @@ from .biome import BiomeConfig
 from .constants import (
     RAIN_ANIMAL_HYDRATION,
     RAIN_MOISTURE_BOOST,
-    RAIN_NUTRIENT_BOOST,
+    RAIN_NUTRIENT_FAST_BOOST,
+    RAIN_NUTRIENT_SLOW_BOOST,
     RAIN_PLANT_HEALTH,
     RAIN_PLANT_HYDRATION,
     RAIN_WATER_SOURCE_BOOST,
@@ -148,12 +149,19 @@ class EnvironmentManager:
                 min(1.0, val + RAIN_MOISTURE_BOOST * intensity)),
         )
 
-        # Soil nutrient boost (dissolved minerals in rainwater)
+        # Soil nutrient boost — split between fast (immediately available)
+        # and slow (long-term reserve) pools.
         self.voxels.walk_layer(
-            "nutrients",
+            "nutrients_fast",
             lambda x, y, z, val: self.voxels.set(
-                "nutrients", x, y, z,
-                min(1.0, val + RAIN_NUTRIENT_BOOST * intensity)),
+                "nutrients_fast", x, y, z,
+                min(1.0, val + RAIN_NUTRIENT_FAST_BOOST * intensity)),
+        )
+        self.voxels.walk_layer(
+            "nutrients_slow",
+            lambda x, y, z, val: self.voxels.set(
+                "nutrients_slow", x, y, z,
+                min(1.0, val + RAIN_NUTRIENT_SLOW_BOOST * intensity)),
         )
 
         # Water source refill

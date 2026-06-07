@@ -59,7 +59,12 @@ from __future__ import annotations
 
 from typing import Any
 
-from .actors import (
+from .config import SIM_CONFIG
+
+DEFAULT_DT = SIM_CONFIG["engine_defaults"]["default_dt"]
+
+# noqa: E402 — imports after config init to avoid circular dependencies
+from .actors import (  # noqa: E402
     FlowContext,
     GuardContext,
     InteractionContext,
@@ -67,7 +72,7 @@ from .actors import (
     build_guard_registry,
     build_interaction_registry,
 )
-from .constants import (
+from .constants import (  # noqa: E402
     DECOMP_NUTRIENT_EFFICIENCY,
     PLANT_BASE_WATER_DEMAND,
     PLANT_DEFAULT_NUTRIENT_DEMAND,
@@ -80,22 +85,23 @@ from .constants import (
     WATER_REFILL_RATE,
     WATER_REPLENISH_RATE,
 )
-from .effects import (
+from .effects import (  # noqa: E402
     EffectBus,
+    NutrientPoolDynamics,
     SoilDeposit,
     SoilDrain,
     SoilEvaporation,
     WaterReplenish,
     WorldProcessContext,
 )
-from .entities import init_entity, is_alive
-from .environment_manager import EnvironmentManager
-from .model_adapter import MotorAdapter, build_context
-from .movement_system import MovementSystem
-from .spatial_index import SpatialQuery
-from .trait_compiler import CompiledEcology, compile_world
-from .traits import DerivedParams
-from .world_processes import (
+from .entities import init_entity, is_alive  # noqa: E402
+from .environment_manager import EnvironmentManager  # noqa: E402
+from .model_adapter import MotorAdapter, build_context  # noqa: E402
+from .movement_system import MovementSystem  # noqa: E402
+from .spatial_index import SpatialQuery  # noqa: E402
+from .trait_compiler import CompiledEcology, compile_world  # noqa: E402
+from .traits import DerivedParams  # noqa: E402
+from .world_processes import (  # noqa: E402
     deposit_organic_matter,
     register_default_world_handlers,
 )
@@ -173,6 +179,10 @@ class EcosystemEngine:
         self.rate_growth: float = rates.get("growth", 1.0)
         self.rate_reproduction: float = rates.get("reproduction", 1.0)
         self.rate_water_replenish: float = rates.get("water_replenishment", 1.0)
+        # Two-pool nutrient rate multipliers (default 1.0 for backward compat)
+        self.rate_mineralization: float = rates.get("mineralization", 1.0)
+        self.rate_dissolution: float = rates.get("dissolution", 1.0)
+        self.rate_nutrient_leaching: float = rates.get("nutrient_leaching", 1.0)
 
         # ── Internal bookkeeping ──
         self._events: list[dict[str, Any]] = []
@@ -264,19 +274,22 @@ class EcosystemEngine:
     # Public API
     # ═══════════════════════════════════════════════════════════════════════
 
-    def step(self, dt: float = 0.1) -> dict[str, Any]:
+    def step(self, dt: float | None = None) -> dict[str, Any]:
         """Advance the simulation by one tick.
 
         Executes the seven-phase hybrid automaton and returns a delta-encoded
         tick packet for client rendering via WebSocket.
 
         Args:
-            dt: Time step in seconds. Default 0.1 (10 Hz).
+            dt: Time step in seconds. Defaults to ``engine_defaults.default_dt``
+                from sim_config.json (0.1 = 10 Hz).
 
         Returns:
             Tick packet dict containing entity updates, spawns, removals,
             events, voxel deltas, and water source states.
         """
+        if dt is None:
+            dt = DEFAULT_DT
         self.tick += 1
         self._events.clear()
         self._spawns.clear()
@@ -372,6 +385,9 @@ class EcosystemEngine:
                 "growth": self.rate_growth,
                 "reproduction": self.rate_reproduction,
                 "water_replenishment": self.rate_water_replenish,
+                "mineralization": self.rate_mineralization,
+                "dissolution": self.rate_dissolution,
+                "nutrient_leaching": self.rate_nutrient_leaching,
             },
         )
         self.effect_bus.apply_world_batch(voxel_effects, self.tick, world_ctx)
@@ -397,16 +413,19 @@ class EcosystemEngine:
                     * self.rate_thirst * dt
                 ),
                 rain_suppressed=rain_suppressed,
+                rainfall_recharge=self.env.biome.rainfall_recharge * dt,
             ),
+            NutrientPoolDynamics(tick=self.tick, dt=dt),
         ]
         if self.env.water_sources:
             world_effects.append(WaterReplenish(
                 tick=self.tick,
                 sources=self.env.water_sources,
                 evap_loss=WATER_EVAPORATION_RATE * self.rate_thirst * dt,
-                replenish_gain=WATER_REPLENISH_RATE * self.rate_water_replenish * dt,
+                replenish_gain=(WATER_REPLENISH_RATE + self.env.biome.rainfall_recharge)
+                    * self.rate_water_replenish * dt,
                 soil_refill_rate=WATER_REFILL_RATE * self.rate_water_replenish * dt,
-                soil_dry_rate=0.02 * dt,
+                soil_dry_rate=self.env.biome.soil_dry_rate_outside_footprint * dt,
             ))
         self.effect_bus.apply_world_batch(world_effects, self.tick, world_ctx)
 
@@ -581,7 +600,7 @@ class EcosystemEngine:
                 tick=self.tick,
                 entity_id=e["id"],
                 position=e["position"],
-                layer="nutrients",
+                layer="nutrients_fast",
                 amount=-total_demand * dt,
                 radius=footprint_r,
             ))
@@ -606,11 +625,12 @@ class EcosystemEngine:
                 layer="organic_matter",
                 amount=-rate,
             ))
+            # Decomposers mineralize OM into the slow nutrient pool
             effects.append(SoilDeposit(
                 tick=self.tick,
                 entity_id=e["id"],
                 position=e["position"],
-                layer="nutrients",
+                layer="nutrients_slow",
                 amount=rate * DECOMP_NUTRIENT_EFFICIENCY,
             ))
 
@@ -639,7 +659,10 @@ class EcosystemEngine:
 
         # Engine-level bookkeeping (tick counters, event log)
         self._rain_ticks_remaining = RAIN_SUPPRESSION_TICKS
-        self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
+        # Only set if not already active — prevents spam-clicking rain
+        # from extending the recovery window indefinitely.
+        if self._recent_rain_recovery_ticks <= 0:
+            self._recent_rain_recovery_ticks = RAIN_REPRO_RECOVERY_TICKS
         self._events.append({"type": "RAIN", "tick": self.tick, **event})
 
     # ═══════════════════════════════════════════════════════════════════════

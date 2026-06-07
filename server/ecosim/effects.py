@@ -228,6 +228,7 @@ class SoilEvaporation(Effect):
     effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
     evap_rate: float  # pre-computed per-cell moisture loss (includes dt)
     rain_suppressed: bool  # True during RAIN_SUPPRESSION_TICKS
+    rainfall_recharge: float = 0.0  # ambient biome-dependent recharge (includes dt)
 
 
 @dataclass(frozen=True, kw_only=True)
@@ -265,6 +266,19 @@ class SoilDeposit(Effect):
     layer: str  # "organic_matter" or "nutrients"
     amount: float
     radius: float | None = None  # footprint radius in world units (None = single cell)
+
+
+@dataclass(frozen=True, kw_only=True)
+class NutrientPoolDynamics(Effect):
+    """Intent: run per-tick two-pool nutrient fluxes.
+
+    Mineralization (organic_matter → nutrients_slow),
+    dissolution (nutrients_slow → nutrients_fast),
+    and leaching (nutrients_fast drains).
+    Rate multipliers are applied by the handler from context.
+    """
+    effect_type: EffectType = EffectType.STATE_VAR_DELTA  # unused by world bus; kept for base compat
+    dt: float  # time step
 
 
 @dataclass(frozen=True, kw_only=True)

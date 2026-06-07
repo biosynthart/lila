@@ -18,6 +18,7 @@ import math
 from dataclasses import replace
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     ACTIVE_ENERGY_DRAIN_STATES,
     COLLAPSE_HEALTH_MULTIPLIER,
@@ -138,7 +139,8 @@ class ConsumerFlowActor:
             self._drain_nearest_water(ctx, DRINK_WATER_DRAIN * dt)
 
         else:
-            thirst = p.thirst_rate * (temp / 30.0) * dt
+            temp_norm = SIM_CONFIG["consumer_physiology"]["temperature_normalization"]
+            thirst = p.thirst_rate * (temp / temp_norm) * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="hydration",
                 delta=-thirst, tick=ctx.tick,
@@ -176,7 +178,18 @@ class ConsumerFlowActor:
             # with the 3× boost they reach it in ~740 ticks — within the recovery window.
             repro_multiplier = rate_repro
             if getattr(ctx, "recent_rain_recovery_ticks", 0) > 0:
-                repro_multiplier *= RAIN_REPRO_BOOST_MULTIPLIER
+                # Scale boost by generation time: fast-reproducing species (e.g.
+                # butterflies with ~200 tick lifespans) get little/no extra boost
+                # because they can already recover on their own. Slow-reproducing
+                # K-selected species (e.g. deer with 5000+ tick lifespans) get the
+                # full boost so populations can rebuild before individuals die out.
+                gen = p.generation_time_ticks if p.generation_time_ticks > 0 else 5000
+                if gen <= 100:
+                    effective_boost = 1.0  # no extra boost for very fast reproducers
+                else:
+                    gen_factor = min(1.0, (gen - 100) / 400.0)
+                    effective_boost = 1.0 + (RAIN_REPRO_BOOST_MULTIPLIER - 1) * gen_factor
+                repro_multiplier *= effective_boost
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="reproductive_drive",
                 delta=p.repro_drive_build * repro_multiplier * dt, tick=ctx.tick,
@@ -235,7 +248,8 @@ class ConsumerFlowActor:
             dx = pos[0] - source["position"][0]
             dz = pos[2] - source["position"][2]
             dist = math.sqrt(dx * dx + dz * dz)
-            if dist <= source.get("radius", 1.0) + 1.0:
+            near_buffer = SIM_CONFIG["consumer_physiology"]["near_water_distance_buffer"]
+            if dist <= source.get("radius", 1.0) + near_buffer:
                 return True
         return False
 
@@ -249,7 +263,8 @@ class ConsumerFlowActor:
                 (pos[0] - source["position"][0]) ** 2 +
                 (pos[2] - source["position"][2]) ** 2
             )
-            if d < source.get("max_radius", 2.0) * 2 and d < best_dist:
+            drain_mult = SIM_CONFIG["consumer_physiology"]["water_drain_search_multiplier"]
+            if d < source.get("max_radius", 1.0) * drain_mult and d < best_dist:
                 best_dist, best = d, source
         if best is not None:
             best["water_level"] = max(0.0, best["water_level"] - amount)
@@ -273,7 +288,7 @@ class ConsumerFlowActor:
 
         # Pollinators sense across the entire grid; others use sensory_range.
         if p.floral_affinity:
-            search_radius = 31.0  # grid_max default (matches engine _grid_max)
+            search_radius = SIM_CONFIG["movement"]["grid_max_default"]
         else:
             search_radius = p.sensory_range
 
@@ -355,7 +370,8 @@ class ProducerFlowActor:
 
         # ── Evapotranspiration — hydration loss (suppressed during rain) ──
         if rain_ticks <= 0:
-            evap = (ctx.biome.evaporation_rate * (temp / 30.0)
+            temp_norm = SIM_CONFIG["plant_physiology"]["evapotranspiration_temp_normalization"]
+            evap = (ctx.biome.evaporation_rate * (temp / temp_norm)
                     * (1.0 - humidity * 0.5) * ctx.rate_multipliers.get("thirst", 1.0))
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="hydration",
@@ -374,7 +390,10 @@ class ProducerFlowActor:
 
         # ── Growth — Liebig's law: limited by scarcest resource ──
         light = ctx.biome.light_availability
-        soil_nutrients = ctx.voxel_grid.get("nutrients", gx, gy, gz)
+        fast_nutrients = ctx.voxel_grid.get("nutrients_fast", gx, gy, gz)
+        slow_nutrients = ctx.voxel_grid.get("nutrients_slow", gx, gy, gz)
+        slow_weight = SIM_CONFIG["plant_physiology"]["slow_nutrient_weight_factor"]
+        soil_nutrients = fast_nutrients + slow_nutrients * slow_weight
         growth_potential = min(sv["hydration"], soil_nutrients, light)
         rate_growth = ctx.rate_multipliers.get("growth", 1.0)
         growth_inc = (PLANT_BASE_GROWTH_RATE * growth_potential
@@ -499,21 +518,21 @@ class DecomposerFlowActor:
 
         # Activity approaches equilibrium (exponential smoothing)
         optimal_activity = min(organic, moisture) * ctx.biome.microbial_activity_modifier
-        activity_delta = (optimal_activity - sv["activity"]) * 0.1 * dt
+        activity_delta = (optimal_activity - sv["activity"]) * ctx.biome.decomposer_activity_smoothing_factor * dt
         effects.append(StateVarDelta(
             entity_id=ctx.entity["id"], var_name="activity",
             delta=activity_delta, tick=ctx.tick,
         ))
 
         # Population dynamics
-        if sv["activity"] > 0.3:
-            pop_growth = 0.005 * sv["activity"] * dt
+        if sv["activity"] > SIM_CONFIG["decomposer_physiology"]["active_population_threshold"]:
+            pop_growth = ctx.biome.decomposer_population_growth_rate * sv["activity"] * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="population",
                 delta=pop_growth, tick=ctx.tick,
             ))
         else:
-            pop_decay = -0.003 * dt
+            pop_decay = -ctx.biome.decomposer_population_decay_rate * dt
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="population",
                 delta=pop_decay, tick=ctx.tick,

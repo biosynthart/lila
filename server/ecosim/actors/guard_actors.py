@@ -16,6 +16,7 @@ from __future__ import annotations
 
 from typing import Any
 
+from ..config import SIM_CONFIG
 from ..constants import (
     CARNIVORE_HUNT_HUNGER,
     DEHYDRATION_HYDRATION,
@@ -125,8 +126,8 @@ class ConsumerGuardActor:
         if ctx.entity["state"] == "DORMANT":
             gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
             soil_moisture = ctx.voxel_grid.get("moisture", gx, gy, gz)
-            # Use same moisture threshold as plant dormancy recovery for consistency
-            if soil_moisture > 0.25:
+            # Biome-dependent: desert organisms need more moisture to wake
+            if soil_moisture > ctx.biome.dormant_consumer_moisture_wake:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                 ))
@@ -135,16 +136,18 @@ class ConsumerGuardActor:
 
         # ── Colony swarming (highest behavioral priority) ──
         if "colony_health" in sv:
+            swarm_entry = SIM_CONFIG["consumer_physiology"]["colony_swarm_entry_threshold"]
             if ctx.entity["state"] == "SWARMING":
                 # Exit SWARMING when colony recovers above threshold.
                 # The near-water bonus (WATER_PROXIMITY_COLONY_FACTOR) helps
                 # rebuild colony_health once the insect reaches a water source,
                 # allowing it to return to normal behavior.
-                if sv["colony_health"] >= 0.35:
+                swarm_exit = SIM_CONFIG["consumer_physiology"]["colony_swarm_exit_threshold"]
+                if sv["colony_health"] >= swarm_exit:
                     effects.append(StateTransition(
                         entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                     ))
-            elif sv["colony_health"] < 0.3:
+            elif sv["colony_health"] < swarm_entry:
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="SWARMING", tick=ctx.tick,
                 ))
@@ -377,7 +380,11 @@ class ProducerGuardActor:
         elif ctx.entity["state"] == "DORMANT":
             gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
             soil_moisture = ctx.voxel_grid.get("moisture", gx, gy, gz)
-            soil_nutrients = ctx.voxel_grid.get("nutrients", gx, gy, gz)
+            # Weighted effective nutrients: fast pool dominates,
+            # slow pool contributes as a buffer (soil health memory).
+            n_fast = ctx.voxel_grid.get("nutrients_fast", gx, gy, gz)
+            n_slow = ctx.voxel_grid.get("nutrients_slow", gx, gy, gz)
+            soil_nutrients = n_fast + n_slow * 0.3
 
             # Increment dormant ticks counter
             current_dormant_ticks = sv.get("_dormant_ticks", 0) + 1
@@ -389,8 +396,16 @@ class ProducerGuardActor:
             # Recovery check
             if (soil_moisture > p.dormancy_recovery_moisture
                     and soil_nutrients > p.dormancy_recovery_nutrients):
-                recovery_health = max(0.015, p.health_drain_dehydrated * 10.0)
-                recovery_hydration = max(0.02, p.health_drain_dehydrated * 13.0)
+                # Biome-dependent recovery rates
+                recovery_health = max(
+                    ctx.biome.plant_dormancy_recovery_health_floor,
+                    p.health_drain_dehydrated * ctx.biome.plant_dormancy_recovery_health_multiplier,
+                )
+                hyd_floor = SIM_CONFIG["plant_physiology"]["dormancy_recovery_hydration_floor"]
+                recovery_hydration = max(
+                    hyd_floor,
+                    p.health_drain_dehydrated * ctx.biome.plant_dormancy_recovery_hydration_multiplier,
+                )
                 effects.append(SetStateVar(
                     entity_id=ctx.entity["id"], var_name="health",
                     value=min(1.0, sv["health"] + recovery_health), tick=ctx.tick,
@@ -476,11 +491,13 @@ class DecomposerGuardActor:
         gx, gy, gz = ctx.voxel_grid.world_to_grid(*ctx.entity["position"])
         organic = ctx.voxel_grid.get("organic_matter", gx, gy, gz)
 
-        if organic > 0.8 and sv["population"] > 0.7:
+        decomp_cfg = SIM_CONFIG["decomposer_physiology"]
+        if (organic > decomp_cfg["blooming_organic_matter_threshold"]
+                and sv["population"] > decomp_cfg["blooming_population_threshold"]):
             effects.append(StateTransition(
                 entity_id=ctx.entity["id"], new_state="BLOOMING", tick=ctx.tick,
             ))
-        elif sv["activity"] < 0.2:
+        elif sv["activity"] < decomp_cfg["dormant_activity_threshold"]:
             effects.append(StateTransition(
                 entity_id=ctx.entity["id"], new_state="DORMANT", tick=ctx.tick,
             ))
