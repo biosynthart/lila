@@ -51,12 +51,12 @@
     "seed": 42
   },
   "rates": {
-    "consumption": 4.0,
+    "consumption": 1.0,
     "hunger": 1.0,
     "thirst": 1.0,
-    "growth": 0.6,
+    "growth": 1.0,
     "reproduction": 1.0,
-    "water_replenishment": 0.4
+    "water_replenishment": 1.0
   },
   "randomize": {
     "jitter": 1.5,
@@ -75,6 +75,7 @@
       "id": "deer_01",
       "type": "ANIMAL",
       "species": "deer",
+      "sex": "female",
       "position": [
         16.0,
         0.0,
@@ -95,6 +96,7 @@
       "id": "deer_02",
       "type": "ANIMAL",
       "species": "deer",
+      "sex": "male",
       "position": [
         20.0,
         0.0,
@@ -115,6 +117,7 @@
       "id": "butterfly_01",
       "type": "INSECT",
       "species": "butterfly",
+      "sex": "female",
       "position": [
         10.0,
         0.0,
@@ -134,6 +137,7 @@
       "id": "butterfly_02",
       "type": "INSECT",
       "species": "butterfly",
+      "sex": "male",
       "position": [
         18.0,
         0.0,
@@ -148,6 +152,88 @@
         "lifespan": 150.0
       },
       "skeleton_id": "insect_wing"
+    },
+    {
+      "id": "butterfly_03",
+      "type": "INSECT",
+      "species": "butterfly",
+      "sex": "female",
+      "position": [
+        14.0,
+        0.0,
+        20.0
+      ],
+      "metadata": {
+        "diet": "herbivore",
+        "colony_size": 1,
+        "metabolism_rate": 0.6,
+        "pollination_range": 6.0,
+        "movement_speed": 2.0,
+        "lifespan": 150.0
+      },
+      "skeleton_id": "insect_wing"
+    },
+    {
+      "id": "butterfly_04",
+      "type": "INSECT",
+      "species": "butterfly",
+      "sex": "male",
+      "position": [
+        22.0,
+        0.0,
+        18.0
+      ],
+      "metadata": {
+        "diet": "herbivore",
+        "colony_size": 1,
+        "metabolism_rate": 0.6,
+        "pollination_range": 6.0,
+        "movement_speed": 2.0,
+        "lifespan": 150.0
+      },
+      "skeleton_id": "insect_wing"
+    },
+    {
+      "id": "songbird_01",
+      "type": "BIRD",
+      "species": "songbird",
+      "sex": "female",
+      "position": [
+        14.0,
+        0.0,
+        6.0
+      ],
+      "metadata": {
+        "diet": "omnivore",
+        "body_mass": 0.025,
+        "metabolism_rate": 0.8,
+        "sensory_range": 10.0,
+        "movement_speed": 4.0,
+        "lifespan": 600.0,
+        "reproduction_threshold": 0.7
+      },
+      "skeleton_id": "bird_small"
+    },
+    {
+      "id": "songbird_02",
+      "type": "BIRD",
+      "species": "songbird",
+      "sex": "male",
+      "position": [
+        22.0,
+        0.0,
+        14.0
+      ],
+      "metadata": {
+        "diet": "omnivore",
+        "body_mass": 0.025,
+        "metabolism_rate": 0.8,
+        "sensory_range": 10.0,
+        "movement_speed": 4.0,
+        "lifespan": 600.0,
+        "reproduction_threshold": 0.7
+      },
+      "skeleton_id": "bird_small"
     },
     {
       "id": "oak_01",
@@ -597,7 +683,7 @@
       ],
       "trophic_level": 2.0,
       "reproductive_strategy": "r_selected",
-      "clutch_size": 1,
+      "clutch_size": 2,
       "generation_time_ticks": 2000,
       "thermal_range": [
         10,
@@ -702,6 +788,33 @@
         "forb"
       ],
       "pollination_syndrome": "insect_generalist"
+    },
+    {
+      "species_id": "songbird",
+      "functional_group": "insectivore",
+      "entity_class": "BIRD",
+      "body_mass_kg": 0.025,
+      "locomotion": "flight_bird",
+      "skeleton_id": "bird_small",
+      "thermoregulation": "endotherm",
+      "diet_type": "omnivore",
+      "diet_breadth": [
+        "pollinator",
+        "forb:fruiting"
+      ],
+      "trophic_level": 2.5,
+      "reproductive_strategy": "r_selected",
+      "clutch_size": 1,
+      "generation_time_ticks": 3000,
+      "thermal_range": [
+        5,
+        35
+      ],
+      "drought_tolerance": 0.2,
+      "shade_tolerance": 0.6,
+      "sensory_range_multiplier": 2.0,
+      "movement_budget": 0.5,
+      "resource_tags": []
     }
   ]
 }

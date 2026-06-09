@@ -123,11 +123,12 @@ class TestFleeActor(unittest.TestCase):
         self.assertEqual(effects, [])
 
     def test_flee_when_predator_nearby(self):
-        """Flee triggers when predator is within trigger distance."""
+        """Flee triggers when predator is within sensory range."""
         p = MagicMock()
         p.species_id = "deer"
         p.diet_type = "herbivore"
         p.speed = 1.0
+        p.sensory_range = 5.0
         # Mock flee targets from compiled ecology
         ctx = make_context(
             params=p,

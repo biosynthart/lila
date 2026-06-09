@@ -66,7 +66,6 @@ POLLINATION_HEALTH_BOOST = 0.02  # health boost to pollinated plant
 POLLINATION_MAX_LINGER = 10      # hard cap on linger ticks per visit
 
 # ── Predation & herbivory distances ───────────────────────────────────────────
-FLEE_TRIGGER_DISTANCE = 2.0     # predator must be this close to trigger flee
 PREDATION_CATCH_DISTANCE = 1.5  # predator must be this close to catch
 HERBIVORY_CONSUME_DISTANCE = 2.0  # herbivore must be this close to eat
 POLLINATION_VISIT_DISTANCE = 2.0  # pollinator must be this close to visit a flower

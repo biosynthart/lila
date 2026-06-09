@@ -160,6 +160,16 @@ class MovementActor:
             if food:
                 return food
 
+        # Omnivores with no plant food nearby: fall back to seeking prey.
+        # This allows songbirds in FORAGING state to hunt butterflies when
+        # flowers are scarce or all on cooldown.
+        if p.diet_type == "omnivore":
+            prey_species = [s for s, _ in diet_order]
+            target = self._find_nearest_prey(
+                pos, p.sensory_range, prey_species, ctx.nearby_entities)
+            if target:
+                return target
+
         # Emergency: critically dehydrated forager with no food nearby.
         hydration = ctx.entity["state_vars"].get("hydration", 1.0)
         if hydration < DEHYDRATION_HYDRATION:

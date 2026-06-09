@@ -185,6 +185,7 @@
 
 <div class="legend">
   <div class="legend-item"><div class="legend-dot" style="background:#c4956a"></div>deer</div>
+  <div class="legend-item"><div class="legend-dot" style="background:#8a7b6b; border-radius:1px"></div>songbird</div>
   <div class="legend-item"><div class="legend-dot" style="background:#a87cc4"></div>butterfly</div>
   <div class="legend-item"><div class="legend-dot" style="background:#3d6b3d; border-radius:50%"></div>oak</div>
   <div class="legend-item"><div class="legend-dot" style="background:#6b8f5e"></div>grass</div>
@@ -222,6 +223,8 @@ const COLORS = {
 
   // Entities
   deer:        '#c4956a',
+  bird:        '#8a7b6b',
+  birdSong:    'rgba(196, 170, 120, ',   // prefix for alpha
   butterfly:   '#a87cc4',
   oak:         '#3d6b3d',
   oakCanopy:   'rgba(61, 107, 61, 0.12)',
@@ -730,6 +733,7 @@ function drawEntities(t) {
     { types: ['PLANT'], species: ['meadow_grass'], draw: drawGrass },
     { types: ['PLANT'], species: ['wildflower'], draw: drawFlower },
     { types: ['ANIMAL'], draw: drawDeer },
+    { types: ['BIRD'], draw: drawBird },
     { types: ['INSECT'], draw: drawButterfly },
   ];
 
@@ -915,6 +919,168 @@ function drawDeer(ctx, cx, cz, ent) {
   ctx.fillText(state.toLowerCase(), cx, cz + size + 10);
 }
 
+// ─── Songbird Rendering ──────────────────────────────
+
+// Persistent song ring particles keyed by entity id
+const birdSongRings = new Map();
+
+function drawBird(ctx, cx, cz, ent) {
+  const state = ent.state;
+  const time = performance.now() * 0.001;
+
+  // Direction from velocity (prev → next)
+  const dx = ent.next.x - ent.prev.x;
+  const dz = ent.next.z - ent.prev.z;
+  const angle = Math.atan2(dz, dx);
+
+  ctx.save();
+  ctx.translate(cx, cz);
+  ctx.rotate(angle);
+
+  // Wing flap rate depends on state
+  let flapSpeed = 6;          // default cruising
+  let flapAmp = 0.45;         // wing arc amplitude (radians)
+  if (state === 'HUNTING' || state === 'FLEEING') {
+    flapSpeed = 14;
+    flapAmp = 0.6;
+  } else if (state === 'FORAGING') {
+    flapSpeed = 4;
+    flapAmp = 0.35;
+  } else if (state === 'RESTING' || state === 'DRINKING') {
+    flapSpeed = 1;
+    flapAmp = 0.1;
+  }
+
+  const wingAngle = Math.sin(time * flapSpeed + cx * 0.3) * flapAmp;
+
+  // Body — small elongated teardrop (longer than wide)
+  const bodyLen = 6;
+  const bodyWid = 2.5;
+
+  ctx.fillStyle = COLORS.bird;
+  ctx.beginPath();
+  ctx.moveTo(bodyLen, 0);                    // beak tip
+  ctx.quadraticCurveTo(bodyLen * 0.3, -bodyWid, -bodyLen * 0.6, 0);  // top curve to tail
+  ctx.quadraticCurveTo(bodyLen * 0.3, bodyWid, bodyLen, 0);           // bottom curve back
+  ctx.fill();
+
+  // Tail — dovetail (filled diamond notch)
+  const tailSpread = state === 'FLEEING' ? 4 : 2.5;
+  const tailBaseX = -bodyLen * 0.5;
+  const tailTipX = -bodyLen * 0.9;
+  ctx.fillStyle = '#6b5e52';
+  ctx.beginPath();
+  ctx.moveTo(tailBaseX, -tailSpread);
+  ctx.lineTo(tailTipX, -tailSpread * 0.3);   // upper outer → inner notch
+  ctx.lineTo(tailTipX + 1, 0);                // center cleft (slightly forward)
+  ctx.lineTo(tailTipX, tailSpread * 0.3);     // lower inner notch
+  ctx.lineTo(tailBaseX, tailSpread);
+  ctx.closePath();
+  ctx.fill();
+
+  // Wings — two arcs above and below body, rotating with flap
+  const wingLen = 7;
+  const wingBaseX = 0.5;
+
+  ctx.strokeStyle = COLORS.bird;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.6 + Math.abs(Math.sin(time * flapSpeed)) * 0.4;
+
+  // Upper wing (sweeps upward)
+  ctx.beginPath();
+  ctx.moveTo(wingBaseX, -bodyWid * 0.5);
+  const uwEndX = wingBaseX - wingLen * Math.cos(wingAngle);
+  const uwEndY = -wingLen * Math.sin(Math.abs(wingAngle) + 0.3);
+  ctx.quadraticCurveTo(
+    wingBaseX - wingLen * 0.4, -bodyWid - wingLen * 0.5,
+    uwEndX, uwEndY
+  );
+  ctx.stroke();
+
+  // Lower wing (sweeps downward)
+  ctx.beginPath();
+  ctx.moveTo(wingBaseX, bodyWid * 0.5);
+  const lwEndX = wingBaseX - wingLen * Math.cos(-wingAngle);
+  const lwEndY = wingLen * Math.sin(Math.abs(wingAngle) + 0.3);
+  ctx.quadraticCurveTo(
+    wingBaseX - wingLen * 0.4, bodyWid + wingLen * 0.5,
+    lwEndX, lwEndY
+  );
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // ── Song rings (IDLE / REPRODUCING states) ──
+  if (state === 'IDLE' || state === 'REPRODUCING') {
+    const ringKey = ent.id;
+    let rings = birdSongRings.get(ringKey);
+    if (!rings) {
+      rings = [];
+      birdSongRings.set(ringKey, rings);
+    }
+
+    // Spawn a new ring every ~1.2 seconds (staggered per entity)
+    const spawnInterval = 1200 + (ent.id.charCodeAt(ent.id.length - 1) % 600);
+    if (!rings.lastSpawn || time * 1000 - rings.lastSpawn > spawnInterval) {
+      rings.push({ birth: time, maxAge: 2.5 });
+      rings.lastSpawn = time * 1000;
+    }
+
+    // Draw and cull rings
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const ring = rings[i];
+      const age = time - ring.birth;
+      if (age > ring.maxAge) { rings.splice(i, 1); continue; }
+
+      const progress = age / ring.maxAge;
+      const radius = 4 + progress * 20;
+      const alpha = (1 - progress) * 0.35;
+
+      ctx.strokeStyle = COLORS.birdSong + alpha + ')';
+      ctx.lineWidth = 1 - progress * 0.6;
+      ctx.beginPath();
+      ctx.arc(cx, cz, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    // Clean up empty maps entries
+    if (rings.length === 0) birdSongRings.delete(ringKey);
+  } else {
+    // Bird stopped singing — clear its rings
+    birdSongRings.delete(ent.id);
+  }
+
+  // ── State indicator ring ──
+  if (state === 'HUNTING') {
+    ctx.strokeStyle = 'rgba(180, 120, 90, 0.4)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cz, 10, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (state === 'DRINKING') {
+    ctx.strokeStyle = 'rgba(90, 140, 180, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cz, 9, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (state === 'RESTING') {
+    ctx.strokeStyle = 'rgba(140, 130, 110, 0.25)';
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.arc(cx, cz, 8, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  }
+
+  // ── Label ──
+  ctx.fillStyle = COLORS.label;
+  ctx.font = '7px JetBrains Mono';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.toLowerCase(), cx, cz + 14);
+}
+
 function drawButterfly(ctx, cx, cz, ent) {
   const time = performance.now() * 0.008;
   const wingFlap = Math.sin(time + cx * 0.1) * 0.5 + 0.5;
@@ -1009,6 +1175,7 @@ function buildMinimalWorld() {
 // For the demo, we pre-populate types based on known IDs.
 function inferEntityType(id) {
   if (id.startsWith('deer'))      return { type: 'ANIMAL', species: 'deer' };
+  if (id.startsWith('bird') || id.startsWith('songbird')) return { type: 'BIRD', species: 'songbird' };
   if (id.startsWith('butterfly')) return { type: 'INSECT', species: 'monarch' };
   if (id.startsWith('oak'))       return { type: 'TREE',  species: 'meadow_oak' };
   if (id.startsWith('grass'))     return { type: 'PLANT', species: 'meadow_grass' };

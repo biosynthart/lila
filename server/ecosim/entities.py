@@ -23,6 +23,7 @@ factory functions that guarantee correct initial state for each type.
 
 from __future__ import annotations
 
+import random as _random
 from typing import Any
 
 # -- Discrete states by entity type ------------------------------------------
@@ -69,6 +70,9 @@ _ANIMAL_DEFAULTS: dict[str, float] = {
     "health": 1.0,
     "reproductive_drive": 0.0,
 }
+
+# Entity types that have sex (male/female) for reproduction gating.
+_SEXED_TYPES = frozenset({"ANIMAL", "BIRD", "INSECT"})
 
 _PLANT_DEFAULTS: dict[str, float] = {
     "hydration": 1.0,
@@ -140,6 +144,11 @@ def init_entity(raw: dict[str, Any]) -> dict[str, Any]:
     # Ensure metadata exists
     if "metadata" not in raw:
         raw["metadata"] = {}
+
+    # Assign sex for mobile consumer types (ANIMAL, BIRD, INSECT).
+    # If not provided in the world definition, pick randomly.
+    if entity_type in _SEXED_TYPES and "sex" not in raw:
+        raw["sex"] = _random.choice(("male", "female"))
 
     # Apply initial entity-level attributes (e.g. _pollination_cooldown for newborns)
     # These are set directly on the entity dict, not in state_vars.
