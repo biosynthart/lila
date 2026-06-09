@@ -198,8 +198,8 @@ class ConsumerGuardActor:
 
         # ── Reproduction exit — one-time event, then return to normal behavior. ──
         # After spawning offspring and resetting reproductive_drive to 0, the entity
-        # must leave REPRODUCING so it can forage/drink/rest again. Since drive is
-        # permanently at 0, it will never reproduce a second time.
+        # must leave REPRODUCING so it can forage/drink/rest again. Drive will rebuild
+        # over time via consumer flow if conditions are good (low hunger, high energy).
         elif ctx.entity["state"] == "REPRODUCING":
             effects.append(StateTransition(
                 entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
@@ -262,7 +262,7 @@ class ConsumerGuardActor:
                     effects.append(StateTransition(
                         entity_id=ctx.entity["id"], new_state="IDLE", tick=ctx.tick,
                     ))
-            elif p.diet_type in ("carnivore", "insectivore") and sv["hunger"] > CARNIVORE_HUNT_HUNGER:
+            elif self._should_hunt(ctx, p, sv):
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="HUNTING", tick=ctx.tick,
                 ))
@@ -282,7 +282,7 @@ class ConsumerGuardActor:
                 value=float(POLLINATOR_WANDER_COOLDOWN), tick=ctx.tick,
             ))
         elif sv["hunger"] >= p.hunger_enter:
-            if p.diet_type in ("carnivore", "insectivore") and sv["hunger"] > CARNIVORE_HUNT_HUNGER:
+            if self._should_hunt(ctx, p, sv):
                 effects.append(StateTransition(
                     entity_id=ctx.entity["id"], new_state="HUNTING", tick=ctx.tick,
                 ))
@@ -303,6 +303,66 @@ class ConsumerGuardActor:
         effects.extend(ReproductionActor().resolve_animal(ctx))
 
         return effects
+
+    @staticmethod
+    def _should_hunt(ctx: Any, p: Any, sv: dict[str, float]) -> bool:
+        """Determine if an entity should transition to HUNTING state.
+
+        Obligate carnivores/insectivores hunt when hunger > CARNIVORE_HUNT_HUNGER.
+        Omnivores also hunt at that threshold, but additionally escalate earlier
+        when prey populations are high relative to plant food sources. This models
+        the ecological dynamic where predators switch to hunting when their primary
+        prey becomes abundant (e.g., songbirds eating butterflies during explosions).
+        """
+        if p.diet_type in ("carnivore", "insectivore"):
+            return sv["hunger"] > CARNIVORE_HUNT_HUNGER
+
+        if p.diet_type == "omnivore":
+            # Always hunt at critical hunger levels
+            if sv["hunger"] > CARNIVORE_HUNT_HUNGER:
+                return True
+
+            # Population-based escalation: check prey-to-plant ratio.
+            # When pollinators outstrip flowers, omnivores switch to hunting
+            # even at moderate hunger. Threshold: 3+ living pollinators per
+            # viable flower (GROWING or FRUITING state).
+            all_entities = getattr(ctx, "_entities", {})
+            if not all_entities:
+                return False
+
+            prey_species = []
+            plant_species = []
+            diet_order = ctx.compiled.get_diet_order(p.species_id) if ctx.compiled else []
+            for target_species, _ in diet_order:
+                interactions = ctx.compiled.get_interactions(p.species_id, target_species)
+                for ix in interactions:
+                    if ix.interaction_type == "predation":
+                        prey_species.append(target_species)
+                    elif ix.interaction_type == "herbivory":
+                        plant_species.append(target_species)
+
+            if not prey_species or not plant_species:
+                return False
+
+            living_prey = sum(
+                1 for e in all_entities.values()
+                if e.get("species") in prey_species and _is_alive_guard(e)
+            )
+            viable_plants = sum(
+                1 for e in all_entities.values()
+                if e.get("species") in plant_species
+                and e["state"] in ("GROWING", "FRUITING")
+            )
+
+            # Ratio threshold: hunt when prey outnumber plants by 3:1
+            return viable_plants > 0 and living_prey / max(viable_plants, 1) >= 3.0
+
+        return False
+
+
+def _is_alive_guard(entity: dict[str, Any]) -> bool:
+    """Check if entity is alive for guard actor population counting."""
+    return entity["state"] not in ("DEAD", "DYING", "DORMANT")
 
 
 class ProducerGuardActor:

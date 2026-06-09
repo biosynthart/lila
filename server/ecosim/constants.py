@@ -66,7 +66,6 @@ POLLINATION_HEALTH_BOOST = 0.02  # health boost to pollinated plant
 POLLINATION_MAX_LINGER = 10      # hard cap on linger ticks per visit
 
 # ── Predation & herbivory distances ───────────────────────────────────────────
-FLEE_TRIGGER_DISTANCE = 2.0     # predator must be this close to trigger flee
 PREDATION_CATCH_DISTANCE = 1.5  # predator must be this close to catch
 HERBIVORY_CONSUME_DISTANCE = 2.0  # herbivore must be this close to eat
 POLLINATION_VISIT_DISTANCE = 2.0  # pollinator must be this close to visit a flower
@@ -156,3 +155,15 @@ DECOMP_NUTRIENT_EFFICIENCY = 0.8
 ACTIVE_MOVEMENT_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "DRINKING", "SWARMING"})
 ACTIVE_ENERGY_DRAIN_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "SWARMING"})
 ENERGY_RECOVERY_STATES = frozenset({"RESTING", "IDLE"})
+
+# ── Roosting (birds seeking trees for rest/shelter) ───────────────────────────
+ROOST_ENERGY_BONUS_FACTOR = 0.5   # energy_recovery bonus when within canopy of a preferred roost tree
+                                  # (total recovery = base + base × factor)
+ROOST_PROXIMITY_BUFFER = 1.0      # extra distance beyond canopy_radius to still count as "at tree"
+                                   # accounts for branch overhang / approach offset
+
+# ── Roosting (birds seeking trees for rest/shelter) ───────────────────────────
+ROOST_ENERGY_BONUS_FACTOR = 0.5   # energy_recovery bonus when within canopy of a preferred roost tree
+                                  # (total recovery = base + base × factor)
+ROOST_PROXIMITY_BUFFER = 1.0      # extra distance beyond canopy_radius to still count as "at tree"
+                                   # accounts for branch overhang / approach offset

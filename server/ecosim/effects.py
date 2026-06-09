@@ -134,6 +134,7 @@ class SpawnEntity(Effect):
     metadata: dict[str, Any]
     state_vars: dict[str, float]
     skeleton_id: str | None = None
+    sex: str | None = None                          # "male" or "female"
     initial_attrs: dict[str, float] | None = field(default=None)  # entity-level attrs
 
 
@@ -520,6 +521,7 @@ class EffectBus:
                     "metadata": effect.metadata,
                     "state_vars": effect.state_vars,
                     "skeleton_id": effect.skeleton_id,
+                    "sex": effect.sex,
                     "initial_attrs": effect.initial_attrs or {},
                 })
 
@@ -709,6 +711,7 @@ class EffectBus:
                     "metadata": effect.metadata,
                     "state_vars": effect.state_vars,
                     "skeleton_id": effect.skeleton_id,
+                    "sex": effect.sex,
                     "initial_attrs": effect.initial_attrs or {},
                 })
 

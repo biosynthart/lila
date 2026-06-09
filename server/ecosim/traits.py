@@ -109,6 +109,10 @@ class TraitVector:
     resource_tags: list[str] = field(default_factory=list)
     pollination_syndrome: str | None = None
     floral_affinity: list[str] = field(default_factory=list)
+    # Species IDs of trees this entity prefers for roosting (e.g. ["oak"]).
+    # When non-empty, the entity seeks a matching tree when RESTING or IDLE
+    # and gains energy recovery bonus within its canopy radius.
+    roost_affinity: list[str] = field(default_factory=list)
 
     @property
     def is_mobile(self) -> bool:
@@ -179,6 +183,7 @@ class DerivedParams:
     trophic_level: float = 2.0
     pollination_syndrome: str | None = None
     floral_affinity: list[str] = field(default_factory=list)
+    roost_affinity: list[str] = field(default_factory=list)
 
 
 # ─────────────────────────────────────────────────────────────────────────────
@@ -378,6 +383,7 @@ def derive_all(traits: TraitVector) -> DerivedParams:
         locomotion=traits.locomotion, skeleton_id=traits.skeleton_id,
         trophic_level=traits.trophic_level, pollination_syndrome=traits.pollination_syndrome,
         floral_affinity=list(traits.floral_affinity),
+        roost_affinity=list(traits.roost_affinity),
     )
 
 
@@ -409,6 +415,7 @@ def trait_vector_from_dict(d: dict) -> TraitVector:
         resource_tags=d.get("resource_tags", []),
         pollination_syndrome=d.get("pollination_syndrome"),
         floral_affinity=d.get("floral_affinity", []),
+        roost_affinity=d.get("roost_affinity", []),
     )
 
 

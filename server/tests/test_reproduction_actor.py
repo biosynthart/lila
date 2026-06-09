@@ -62,6 +62,7 @@ def make_animal_context(
         "type": entity_type,
         "state": state,
         "position": pos,
+        "sex": "female",
         "state_vars": sv,
         "metadata": {"body_mass": 100.0},
     }
@@ -84,6 +85,7 @@ def make_animal_context(
             "type": entity_type,
             "state": "IDLE",
             "position": mate_pos,
+            "sex": "male",
             "state_vars": {"health": 0.8},
         }
     ctx._entities = entities
@@ -278,6 +280,23 @@ class TestReproductionActorAnimal(unittest.TestCase):
         transitions = [e for e in effects if isinstance(e, StateTransition)]
         self.assertEqual(len(transitions), 1)
         self.assertEqual(transitions[0].new_state, "REPRODUCING")
+
+    def test_reproductionactor_male_cannot_spawn(self):
+        """Male entities never produce offspring even with drive and mate."""
+        ctx = make_animal_context(reproductive_drive=0.9, has_mate=True)
+        ctx.entity["sex"] = "male"
+
+        effects = self.actor.resolve_animal(ctx)
+        self.assertEqual(effects, [])
+
+    def test_reproductionactor_no_spawn_when_same_sex(self):
+        """Female with only same-sex mates nearby → no spawn."""
+        ctx = make_animal_context(reproductive_drive=0.9, has_mate=True)
+        # Mate is also female — should not count as valid mate
+        ctx._entities["mate_1"]["sex"] = "female"
+
+        effects = self.actor.resolve_animal(ctx)
+        self.assertEqual(effects, [])
 
 
 class TestReproductionActorPlant(unittest.TestCase):

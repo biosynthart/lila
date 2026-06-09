@@ -29,6 +29,7 @@ from ..constants import (
     POLLINATOR_CROWD_RADIUS,
     POLLINATOR_MAX_PER_FLOWER,
     REPRO_MATE_SEEK_DRIVE,
+    ROOST_PROXIMITY_BUFFER,
     WANDER_RANGE,
     WATER_DRY_THRESHOLD,
 )
@@ -131,6 +132,13 @@ class MovementActor:
                 return [SetTarget(
                     entity_id=ctx.entity["id"], position=target, tick=ctx.tick)]
 
+        # ── Roosting — birds with roost_affinity seek trees when RESTING/IDLE ──
+        if p.roost_affinity and state in ("RESTING", "IDLE"):
+            target = self._resolve_roosting_target(ctx, pos, p)
+            if target is not None:
+                return [SetTarget(
+                    entity_id=ctx.entity["id"], position=target, tick=ctx.tick)]
+
         # ── IDLE pollinators — actively explore for flowers ──
         # WANDERING is excluded — during forced exploration cooldown, butterflies
         # should wander randomly to disperse, not fly back to nearby flowers.
@@ -159,6 +167,16 @@ class MovementActor:
                 pos, p.sensory_range, diet_order, ctx.nearby_entities)
             if food:
                 return food
+
+        # Omnivores with no plant food nearby: fall back to seeking prey.
+        # This allows songbirds in FORAGING state to hunt butterflies when
+        # flowers are scarce or all on cooldown.
+        if p.diet_type == "omnivore":
+            prey_species = [s for s, _ in diet_order]
+            target = self._find_nearest_prey(
+                pos, p.sensory_range, prey_species, ctx.nearby_entities)
+            if target:
+                return target
 
         # Emergency: critically dehydrated forager with no food nearby.
         hydration = ctx.entity["state_vars"].get("hydration", 1.0)
@@ -227,6 +245,26 @@ class MovementActor:
         # No flowers in range — wander randomly
         return self._clamp_to_grid(pos, grid_max)
 
+    def _resolve_roosting_target(
+        self, ctx: Any, pos: list[float], p: Any,
+    ) -> list[float] | None:
+        """Resolve RESTING/IDLE bird target: seek nearest preferred roost tree.
+
+        Birds with roost_affinity seek trees whose species matches their
+        preference list. They approach to within the tree's canopy radius
+        (plus a small buffer) so they can perch in its branches.
+
+        Uses ctx._entities for global search since birds may need to spot
+        trees across the landscape. Falls back to None (no target) if no
+        suitable tree is found — the caller handles default behavior.
+        """
+        all_entities = getattr(ctx, "_entities", {})
+        get_params = getattr(ctx, "_get_params", None)
+        return self._find_nearest_roost_tree(
+            pos, p.sensory_range * 2, p.roost_affinity,
+            all_entities, get_params,
+        )
+
     # ── Target search helpers ─────────────────────────────────────────────────
 
     @staticmethod
@@ -279,6 +317,62 @@ class MovementActor:
                 d = _distance(pos, other["position"])
                 if d < search_range and d < best_dist:
                     best_dist, best_pos = d, list(other["position"])
+        return best_pos
+
+    @staticmethod
+    def _find_nearest_roost_tree(
+        pos: list[float], search_range: float,
+        roost_affinity: list[str],
+        all_entities: dict[str, Any],
+        get_params: Any = None,
+    ) -> list[float] | None:
+        """Find nearest tree species matching the bird's roost affinity.
+
+        Returns a position just inside the tree's canopy radius (approach point),
+        or None if no suitable tree is found within search_range.
+        Only considers living trees (not DEAD/DYING/DORMANT) with a canopy_radius > 0.
+        """
+        best_dist: float = float("inf")
+        best_pos: list[float] | None = None
+
+        for other in all_entities.values():
+            if other.get("type") != "TREE":
+                continue
+            if other["state"] in ("DEAD", "DYING", "DORMANT"):
+                continue
+            # Check species match against roost affinity list
+            tree_species = other.get("species", "")
+            if tree_species not in roost_affinity:
+                continue
+            # Tree must have a canopy to perch in — look up via DerivedParams
+            canopy_radius = 0.0
+            if get_params is not None:
+                tree_params = get_params(other)
+                if tree_params is not None:
+                    canopy_radius = getattr(tree_params, "canopy_radius", 0.0) or 0.0
+            # Fallback: check metadata for canopy radius from world definition
+            if canopy_radius <= 0:
+                canopy_radius = other.get("metadata", {}).get("canopy_radius", 0.0)
+            if canopy_radius <= 0:
+                continue
+
+            d = _distance(pos, other["position"])
+            if d > search_range:
+                continue
+
+            # Approach to just inside the canopy edge (with small buffer)
+            approach_dist = max(canopy_radius - ROOST_PROXIMITY_BUFFER, 0.5)
+            target_pos = list(other["position"])
+            if d > approach_dist:
+                dx = other["position"][0] - pos[0]
+                dz = other["position"][2] - pos[2]
+                ndist = math.sqrt(dx * dx + dz * dz) or 1.0
+                nx, nz = dx / ndist, dz / ndist
+                target_pos[0] = other["position"][0] - nx * approach_dist
+                target_pos[2] = other["position"][2] - nz * approach_dist
+
+            if d < best_dist:
+                best_dist, best_pos = d, target_pos
         return best_pos
 
     @staticmethod

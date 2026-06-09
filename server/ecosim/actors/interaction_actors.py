@@ -30,7 +30,6 @@ from typing import Any
 from ..config import SIM_CONFIG
 from ..constants import (
     FLEE_ESCAPE_DISTANCE,
-    FLEE_TRIGGER_DISTANCE,
     HERBIVORY_CONSUME_DISTANCE,
     HERBIVORY_MIN_HUNGER,
     OM_DEPOSIT_MAX,
@@ -65,7 +64,7 @@ class FleeActor:
     """Check for nearby predators and trigger flee response.
 
     Detection: entity has flee targets from interaction matrix, predator
-    within FLEE_TRIGGER_DISTANCE (2.0).
+    within the entity's sensory range.
 
     Returns effects: StateTransition to FLEEING, SetTarget with escape position,
     and optionally an EventRecord if the state actually changed.
@@ -96,7 +95,7 @@ class FleeActor:
         for other in ctx.nearby_entities:
             if other.get("species", "") in flee_targets:
                 dist = self._distance(ctx.entity["position"], other["position"])
-                if dist < FLEE_TRIGGER_DISTANCE:
+                if dist < p.sensory_range:
                     escape_pos = self._flee_direction(
                         ctx.entity["position"], other["position"]
                     )
@@ -181,8 +180,22 @@ class PredationActor:
         if p.diet_type not in ("carnivore", "insectivore", "omnivore"):
             return []
 
-        # Check hunting state and hunger threshold
-        if ctx.entity["state"] != "HUNTING" or ctx.entity["state_vars"]["hunger"] <= 0.3:
+        # Check hunting state and hunger threshold.
+        # Obligate carnivores/insectivores require HUNTING state + high hunger.
+        # Omnivores can opportunistically catch prey while FORAGING —
+        # a songbird encounters a butterfly while foraging flowers and catches it.
+        if p.diet_type in ("carnivore", "insectivore"):
+            if ctx.entity["state"] != "HUNTING" or ctx.entity["state_vars"]["hunger"] <= 0.3:
+                return []
+        elif p.diet_type == "omnivore":
+            # Omnivores hunt in both HUNTING and FORAGING states (opportunistic)
+            if ctx.entity["state"] not in ("HUNTING", "FORAGING"):
+                return []
+            # Lower hunger threshold for opportunistic predation — omnivores
+            # already entered FORAGING because they're hungry enough to seek food.
+            # No additional hunger gate needed; if they're foraging and prey is
+            # within catch distance, take it.
+        else:
             return []
 
         # Find catchable prey from interaction matrix

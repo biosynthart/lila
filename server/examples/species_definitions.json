@@ -157,13 +157,14 @@
       "diet_breadth": ["pollinator", "forb:fruiting"],
       "trophic_level": 2.5,
       "reproductive_strategy": "r_selected",
-      "clutch_size": 4,
+      "clutch_size": 1,
       "generation_time_ticks": 3000,
       "thermal_range": [5, 35],
       "drought_tolerance": 0.2,
       "shade_tolerance": 0.6,
       "sensory_range_multiplier": 2.0,
       "movement_budget": 0.5,
+      "roost_affinity": ["oak", "meadow_oak"],
       "resource_tags": []
     },
     {

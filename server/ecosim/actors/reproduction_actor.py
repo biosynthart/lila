@@ -82,6 +82,10 @@ class ReproductionActor:
         p = ctx.params
         sv = ctx.entity["state_vars"]
 
+        # Only females produce offspring.
+        if ctx.entity.get("sex") != "female":
+            return []
+
         # Drive must exceed threshold
         if sv.get("reproductive_drive", 0) <= p.repro_drive_threshold:
             return []
@@ -99,15 +103,21 @@ class ReproductionActor:
 
     @staticmethod
     def _find_mate(ctx: Any) -> bool:
-        """Check if a living mate of the same species is within sensory range."""
+        """Check if a living mate of the same species and opposite sex is within sensory range."""
         entity = ctx.entity
         params = ctx.params
+        parent_sex = entity.get("sex")
         for other in ctx._entities.values():
             if not is_alive(other):
                 continue
             if other["id"] == entity["id"]:
                 continue
             if other.get("species") != entity.get("species"):
+                continue
+            # Must be opposite sex (both must have a sex assigned)
+            if other.get("sex") is None or parent_sex is None:
+                continue
+            if other["sex"] == parent_sex:
                 continue
             dx = other["position"][0] - entity["position"][0]
             dz = other["position"][2] - entity["position"][2]
@@ -167,6 +177,9 @@ class ReproductionActor:
                 "age": 0.0,
             }
 
+            # Offspring sex — randomly assigned male or female
+            offspring_sex = _random.choice(("male", "female"))
+
             if "colony_health" in sv:
                 offspring_sv["colony_health"] = max(
                     CHILD_COLONY_FLOOR, sv["colony_health"] * CHILD_COLONY_INHERIT)
@@ -187,6 +200,7 @@ class ReproductionActor:
                     state_vars=offspring_sv,
                     skeleton_id=ctx.entity.get("skeleton_id"),
                     initial_attrs={
+                        "sex": offspring_sex,
                         # Newborn pollinators start with a cooldown so they don't
                         # immediately re-pollinate the flower their parent was at.
                         "_pollination_cooldown": float(POLLINATOR_POST_VISIT_COOLDOWN),
