@@ -42,6 +42,8 @@ from ..constants import (
     REPRO_BUILD_MIN_HEALTH,
     REPRO_DECAY_ENERGY,
     REPRO_DECAY_HUNGER,
+    ROOST_ENERGY_BONUS_FACTOR,
+    ROOST_PROXIMITY_BUFFER,
     STARVATION_HUNGER,
     WATER_DRY_THRESHOLD,
     WATER_PROXIMITY_COLONY_FACTOR,
@@ -104,9 +106,14 @@ class ConsumerFlowActor:
                 delta=-drain, tick=ctx.tick,
             ))
         elif ctx.entity["state"] in ENERGY_RECOVERY_STATES:
+            energy_gain = p.energy_recovery * dt
+            # Roosting bonus: birds within canopy of a preferred roost tree
+            # recover extra energy (shade/wind protection).
+            if p.roost_affinity and self._is_near_roost_tree(ctx, p):
+                energy_gain *= (1.0 + ROOST_ENERGY_BONUS_FACTOR)
             effects.append(StateVarDelta(
                 entity_id=ctx.entity["id"], var_name="energy",
-                delta=p.energy_recovery * dt, tick=ctx.tick,
+                delta=energy_gain, tick=ctx.tick,
             ))
 
         # Lingering at a resource (e.g. pollination visit) also recovers energy
@@ -250,6 +257,42 @@ class ConsumerFlowActor:
             dist = math.sqrt(dx * dx + dz * dz)
             near_buffer = SIM_CONFIG["consumer_physiology"]["near_water_distance_buffer"]
             if dist <= source.get("radius", 1.0) + near_buffer:
+                return True
+        return False
+
+    def _is_near_roost_tree(self, ctx: Any, p: Any) -> bool:
+        """Check if entity is within canopy of a preferred roost tree.
+
+        Returns True if the entity is within (canopy_radius + buffer)
+        of any living TREE whose species matches the entity's roost_affinity.
+        Uses ctx._entities for global lookup and ctx._get_params for traits.
+        """
+        pos = ctx.entity["position"]
+        all_entities = getattr(ctx, "_entities", {})
+        get_params = getattr(ctx, "_get_params", None)
+
+        for other in all_entities.values():
+            if other.get("type") != "TREE":
+                continue
+            if other["state"] in ("DEAD", "DYING", "DORMANT"):
+                continue
+            tree_species = other.get("species", "")
+            if tree_species not in p.roost_affinity:
+                continue
+            # Look up canopy radius from DerivedParams or metadata fallback
+            canopy_radius = 0.0
+            if get_params is not None:
+                tree_params = get_params(other)
+                if tree_params is not None:
+                    canopy_radius = getattr(tree_params, "canopy_radius", 0.0) or 0.0
+            if canopy_radius <= 0:
+                canopy_radius = other.get("metadata", {}).get("canopy_radius", 0.0)
+            if canopy_radius <= 0:
+                continue
+            dx = pos[0] - other["position"][0]
+            dz = pos[2] - other["position"][2]
+            dist = math.sqrt(dx * dx + dz * dz)
+            if dist <= canopy_radius + ROOST_PROXIMITY_BUFFER:
                 return True
         return False
 

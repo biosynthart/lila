@@ -155,3 +155,15 @@ DECOMP_NUTRIENT_EFFICIENCY = 0.8
 ACTIVE_MOVEMENT_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "DRINKING", "SWARMING"})
 ACTIVE_ENERGY_DRAIN_STATES = frozenset({"FORAGING", "HUNTING", "FLEEING", "SWARMING"})
 ENERGY_RECOVERY_STATES = frozenset({"RESTING", "IDLE"})
+
+# ── Roosting (birds seeking trees for rest/shelter) ───────────────────────────
+ROOST_ENERGY_BONUS_FACTOR = 0.5   # energy_recovery bonus when within canopy of a preferred roost tree
+                                  # (total recovery = base + base × factor)
+ROOST_PROXIMITY_BUFFER = 1.0      # extra distance beyond canopy_radius to still count as "at tree"
+                                   # accounts for branch overhang / approach offset
+
+# ── Roosting (birds seeking trees for rest/shelter) ───────────────────────────
+ROOST_ENERGY_BONUS_FACTOR = 0.5   # energy_recovery bonus when within canopy of a preferred roost tree
+                                  # (total recovery = base + base × factor)
+ROOST_PROXIMITY_BUFFER = 1.0      # extra distance beyond canopy_radius to still count as "at tree"
+                                   # accounts for branch overhang / approach offset

@@ -164,6 +164,7 @@
       "shade_tolerance": 0.6,
       "sensory_range_multiplier": 2.0,
       "movement_budget": 0.5,
+      "roost_affinity": ["oak", "meadow_oak"],
       "resource_tags": []
     },
     {

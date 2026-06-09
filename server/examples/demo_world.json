@@ -51,12 +51,12 @@
     "seed": 42
   },
   "rates": {
-    "consumption": 1.0,
+    "consumption": 2.0,
     "hunger": 1.0,
     "thirst": 1.0,
     "growth": 1.0,
     "reproduction": 1.0,
-    "water_replenishment": 1.0
+    "water_replenishment": 0.4
   },
   "randomize": {
     "jitter": 1.5,
@@ -775,7 +775,7 @@
         5,
         35
       ],
-      "drought_tolerance": 0.15,
+      "drought_tolerance": 0.05,
       "shade_tolerance": 0.3,
       "sensory_range_multiplier": 0.0,
       "movement_budget": 0.0,
@@ -814,6 +814,7 @@
       "shade_tolerance": 0.6,
       "sensory_range_multiplier": 2.0,
       "movement_budget": 0.5,
+      "roost_affinity": ["meadow_oak"],
       "resource_tags": []
     }
   ]

@@ -86,9 +86,12 @@ class MovementSystem:
         # IDLE: actively seek and discover flowers across the field.
         # WANDERING: wander randomly (no flower-seeking) to disperse
         # after pollination bouts, exploring new areas.
+        # Birds with roost_affinity move during RESTING/IDLE to seek trees.
         can_move = (
             entity["state"] in ACTIVE_MOVEMENT_STATES
             or (params.floral_affinity and entity["state"] in ("IDLE", "WANDERING"))
+            or (getattr(params, "roost_affinity", False)
+                and entity["state"] in ("RESTING", "IDLE"))
         )
 
         if params.speed > 0 and can_move:
