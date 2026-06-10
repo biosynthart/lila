@@ -89,7 +89,7 @@ _DEFAULT_CONFIG: dict[str, Any] = {
         },
     },
     "engine_defaults": {
-        "default_dt": 0.1,
+        "default_dt": 2.0,   # 0.5 Hz — server is state oracle; client handles behavioral continuity
     },
 }
 

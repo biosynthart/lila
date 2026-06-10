@@ -394,9 +394,13 @@ The actor system extracts entity↔entity interactions into pure functions that 
 - Simulation atlas — UMAP projection of discovered ecosystems
 
 **Near-term:**
-- Telemetry infrastructure — config snapshots, time-series aggregates, event batching for ML training pipelines
-- Hybrid BYOM — extend pluggable adapters from motor inference to full simulation phases (learned diffusion, behavior bias, narrative control)
+- Distributed simulation engine — spatially partitioned engines with efficient message passing (single-node first)
 - Spatial hash for O(1) neighbor queries (SpatialIndex strategy swap)
+- OctreeVoxelGrid implementation (VoxelGrid protocol phase 3–4)
+
+**Shelved (revisit after scalability work):**
+- Telemetry infrastructure — config snapshots, time-series aggregates, event batching for ML training pipelines
+- Hybrid BYOM — extend pluggable adapters from motor inference to full simulation phases
 - Calibration & regression testing (2000-tick baseline with two-pool nutrients)
 - Emergent dynamics validation with 8 species (trophic cascades, Lotka-Volterra oscillations)
 - Trait-based search — θ encodes organism traits, not just rate multipliers

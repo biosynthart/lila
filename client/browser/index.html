@@ -181,6 +181,7 @@
   <div class="stat"><span class="label">entities</span><span class="value" id="entities">—</span></div>
   <div class="stat"><span class="label">events</span><span class="value" id="event-count">0</span></div>
   <div class="stat"><span class="label">fps</span><span class="value" id="fps">—</span></div>
+  <div class="stat"><span class="label">blend</span><span class="value" id="blend-stat">—</span></div>
 </div>
 
 <div class="legend">
@@ -198,17 +199,22 @@
 <button class="rain-btn" id="rain-btn" title="Send rainfall to replenish moisture">☔ rain</button>
 <button class="record-btn" id="record-btn" title="Record 10 seconds of the simulation">⏺ record</button>
 
+<script src="behavioral_model.js"></script>
 <script>
 // ═══════════════════════════════════════════════════════
 // līlā Browser Visualizer
 // Connects to the worker WebSocket, renders the ecosystem
+// Client-side behavioral model fills gaps between 0.5Hz server ticks
 // ═══════════════════════════════════════════════════════
 
 const GRID_SIZE = 32;
 const CELL_PX = 18;
 const PADDING = 40;
 const CANVAS_SIZE = GRID_SIZE * CELL_PX + PADDING * 2;
-const TICK_RATE = 0.1; // seconds
+
+// Server tick rate (0.5Hz = 2s between ticks)
+// Client behavioral model fills the gap with procedural prediction
+const TICK_RATE = BehavioralModel.CONFIG.serverTickRate;
 
 // ─── Colors ───────────────────────────────────────────
 const COLORS = {
@@ -281,6 +287,10 @@ let displayFps = 0;
 
 // Tick timing for interpolation
 let lastTickTime = performance.now();
+
+// Behavioral model state store (fills gaps between server ticks)
+const behaviorStore = new BehavioralModel.StateStore();
+let lastFrameTime = performance.now();
 
 // ─── WebSocket ────────────────────────────────────────
 
@@ -418,7 +428,10 @@ function handleTickPacket(packet) {
   currentTick = packet.tick || 0;
   lastTickTime = performance.now();
 
-  // Entity updates
+  // Feed tick data to behavioral state store (reconciles with predictions)
+  behaviorStore.processTickPacket(packet);
+
+  // Also update legacy entity map for backward compatibility
   if (packet.entity_updates) {
     for (const u of packet.entity_updates) {
       let ent = entities.get(u.id);
@@ -598,11 +611,17 @@ function render() {
     frameCount = 0;
     lastFpsTime = now;
     document.getElementById('fps').textContent = displayFps;
+
+    // Update behavioral model stats every second
+    updateBehaviorStats();
   }
 
-  // Interpolation factor (0..1 between ticks)
-  const tickElapsed = (now - lastTickTime) / 1000;
-  const t = Math.min(1.0, tickElapsed / TICK_RATE);
+  // Frame delta for behavioral prediction
+  const frameDt = Math.min(0.05, (now - lastFrameTime) / 1000); // cap at 50ms to prevent spiral
+  lastFrameTime = now;
+
+  // Run behavioral prediction for all entities
+  behaviorStore.predictAll(frameDt);
 
   // Clear
   ctx.fillStyle = COLORS.bg;
@@ -611,7 +630,7 @@ function render() {
   drawMoistureHeatmap();
   drawWater();
   drawGrid();
-  drawEntities(t);
+  drawEntitiesWithBehavior(frameDt);
   drawParticles();
 
   updateParticles();
@@ -745,6 +764,39 @@ function drawEntities(t) {
       const x = lerp(ent.prev.x, ent.next.x, t);
       const z = lerp(ent.prev.z, ent.next.z, t);
       const [cx, cz] = worldToCanvas(x, z);
+
+      layer.draw(ctx, cx, cz, ent);
+    }
+  }
+}
+
+// ─── Behavioral Entity Rendering (uses client-side prediction) ──────────
+
+function drawEntitiesWithBehavior(frameDt) {
+  // Draw order: trees (back) → grass → flowers → deer → birds → butterflies (front)
+  const layers = [
+    { types: ['TREE'], draw: drawTree },
+    { types: ['PLANT'], species: ['meadow_grass'], draw: drawGrass },
+    { types: ['PLANT'], species: ['wildflower'], draw: drawFlower },
+    { types: ['ANIMAL'], draw: drawDeerBehavioral },
+    { types: ['BIRD'], draw: drawBirdBehavioral },
+    { types: ['INSECT'], draw: drawButterflyBehavioral },
+  ];
+
+  for (const layer of layers) {
+    for (const ent of entities.values()) {
+      if (!layer.types.includes(ent.type)) continue;
+      if (layer.species && !layer.species.includes(ent.species)) continue;
+
+      // Get behaviorally predicted position from state store
+      const predicted = behaviorStore.getRenderPosition(ent.id);
+      if (!predicted) continue;
+
+      const [cx, cz] = worldToCanvas(predicted.x, predicted.z);
+      const microBehaviors = behaviorStore.getMicroBehaviors(ent.id);
+
+      // Pass micro-behaviors to draw functions via ent.temp_micro
+      ent._micro = microBehaviors;
 
       layer.draw(ctx, cx, cz, ent);
     }
@@ -917,6 +969,284 @@ function drawDeer(ctx, cx, cz, ent) {
   ctx.font = '8px JetBrains Mono';
   ctx.textAlign = 'center';
   ctx.fillText(state.toLowerCase(), cx, cz + size + 10);
+}
+
+// ─── Behavioral Entity Rendering (with micro-behaviors) ──────────────
+
+function drawDeerBehavioral(ctx, cx, cz, ent) {
+  const state = ent.state;
+  const hunger = ent.state_vars.hunger || 0;
+  const micro = ent._micro || {};
+  const time = performance.now() * 0.001;
+
+  // Size varies slightly with state
+  const size = state === 'RESTING' ? 5 : 7;
+
+  // Direction from predicted velocity (behavioral model)
+  const predicted = behaviorStore.getRenderPosition(ent.id);
+  const dx = predicted ? (predicted.x - ent.prev.x) : (ent.next.x - ent.prev.x);
+  const dz = predicted ? (predicted.z - ent.prev.z) : (ent.next.z - ent.prev.z);
+  const angle = Math.atan2(dz, dx);
+
+  // Breathing offset (micro-behavior)
+  const breathOffset = micro.breathingAmp 
+    ? Math.sin(time * micro.breathingRate * 3) * micro.breathingAmp * 0.5 
+    : 0;
+
+  ctx.save();
+  ctx.translate(cx, cz + breathOffset);
+  ctx.rotate(angle);
+
+  // Body (triangle pointing in movement direction)
+  ctx.fillStyle = COLORS.deer;
+  ctx.beginPath();
+  ctx.moveTo(size, 0);
+  ctx.lineTo(-size * 0.7, -size * 0.5);
+  ctx.lineTo(-size * 0.7, size * 0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Head dot with scanning behavior
+  const headX = size * 0.6 + (micro.headScan || 0) * 2;
+  ctx.fillStyle = '#d4aa7a';
+  ctx.beginPath();
+  ctx.arc(headX, micro.headScan * 1.5, 2, 0, Math.PI * 2);
+  ctx.fill();
+
+  // Ear twitch visualization (subtle line above head)
+  if (micro.earTwitch && Math.abs(micro.earTwitch) > 0.1) {
+    ctx.strokeStyle = 'rgba(196, 149, 106, 0.5)';
+    ctx.lineWidth = 0.8;
+    ctx.beginPath();
+    ctx.moveTo(headX - 1, -2);
+    ctx.lineTo(headX - 1 + micro.earTwitch * 3, -4);
+    ctx.stroke();
+  }
+
+  ctx.restore();
+
+  // State indicator ring
+  if (state === 'DRINKING') {
+    ctx.strokeStyle = 'rgba(90, 140, 180, 0.5)';
+    ctx.lineWidth = 1;
+    ctx.beginPath();
+    ctx.arc(cx, cz, size + 3, 0, Math.PI * 2);
+    ctx.stroke();
+  } else if (state === 'RESTING') {
+    // Weight shifting visualization
+    const weightShift = micro.weightShift || 0;
+    ctx.strokeStyle = `rgba(180, 170, 140, ${0.2 + Math.abs(weightShift)})`;
+    ctx.lineWidth = 1;
+    ctx.setLineDash([2, 2]);
+    ctx.beginPath();
+    ctx.arc(cx + weightShift * 3, cz, size + 2, 0, Math.PI * 2);
+    ctx.stroke();
+    ctx.setLineDash([]);
+  } else if (state === 'FLEEING') {
+    // Alertness glow
+    const alertAlpha = (micro.alertness || 0.5) * 0.3;
+    ctx.strokeStyle = `rgba(200, 140, 90, ${alertAlpha})`;
+    ctx.lineWidth = 1.5;
+    ctx.beginPath();
+    ctx.arc(cx, cz, size + 4, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Motion latent visualization (subtle halo color shift)
+  if (ent.motion_latent && ent.skeleton_id) {
+    const ml = ent.motion_latent;
+    const intensity = (Math.abs(ml[0]) + Math.abs(ml[2])) * 0.3;
+    ctx.strokeStyle = `rgba(196, 149, 106, ${intensity * 0.2})`;
+    ctx.lineWidth = 0.5;
+    ctx.beginPath();
+    ctx.arc(cx, cz, size + 5, 0, Math.PI * 2);
+    ctx.stroke();
+  }
+
+  // Label with blend factor indicator
+  const behavior = behaviorStore.behaviors.get(ent.id);
+  let labelSuffix = '';
+  if (behavior) {
+    const bf = parseFloat(behavior.blendFactor.toFixed(1));
+    if (bf < 0.5) labelSuffix = ' ←corr'; // correcting to server truth
+    else if (bf > 0.9) labelSuffix = ' →pred'; // trusting prediction
+  }
+  ctx.fillStyle = COLORS.label;
+  ctx.font = '8px JetBrains Mono';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.toLowerCase() + labelSuffix, cx, cz + size + 10);
+}
+
+function drawBirdBehavioral(ctx, cx, cz, ent) {
+  // For now, delegate to standard bird drawing with behavioral position
+  // Bird micro-behaviors can be enhanced later (wing flap variation, head bob)
+  const state = ent.state;
+  const time = performance.now() * 0.001;
+  const micro = ent._micro || {};
+
+  // Direction from predicted velocity
+  const predicted = behaviorStore.getRenderPosition(ent.id);
+  const dx = predicted ? (predicted.x - ent.prev.x) : (ent.next.x - ent.prev.x);
+  const dz = predicted ? (predicted.z - ent.prev.z) : (ent.next.z - ent.prev.z);
+  const angle = Math.atan2(dz, dx);
+
+  ctx.save();
+  ctx.translate(cx, cz);
+  ctx.rotate(angle);
+
+  // Wing flap rate depends on state + micro-behavior alertness
+  let flapSpeed = 6;
+  let flapAmp = 0.45;
+  if (state === 'HUNTING' || state === 'FLEEING') {
+    flapSpeed = 14;
+    flapAmp = 0.6;
+  } else if (state === 'FORAGING') {
+    flapSpeed = 4;
+    flapAmp = 0.35;
+  } else if (state === 'RESTING' || state === 'DRINKING') {
+    flapSpeed = 1;
+    flapAmp = 0.1;
+  }
+
+  // Alertness modulates wing tension
+  const alertMod = micro.alertness ? 1 + micro.alertness * 0.3 : 1;
+  const wingAngle = Math.sin(time * flapSpeed + cx * 0.3) * flapAmp * alertMod;
+
+  // Body — small elongated teardrop
+  const bodyLen = 6;
+  const bodyWid = 2.5;
+
+  ctx.fillStyle = COLORS.bird;
+  ctx.beginPath();
+  ctx.moveTo(bodyLen, 0);
+  ctx.quadraticCurveTo(bodyLen * 0.3, -bodyWid, -bodyLen * 0.6, 0);
+  ctx.quadraticCurveTo(bodyLen * 0.3, bodyWid, bodyLen, 0);
+  ctx.fill();
+
+  // Wings with behavioral modulation
+  const wingLen = 7;
+  const wingBaseX = 0.5;
+
+  ctx.strokeStyle = COLORS.bird;
+  ctx.lineWidth = 1.2;
+  ctx.globalAlpha = 0.6 + Math.abs(Math.sin(time * flapSpeed)) * 0.4;
+
+  // Upper wing
+  ctx.beginPath();
+  ctx.moveTo(wingBaseX, -bodyWid * 0.5);
+  const uwEndX = wingBaseX - wingLen * Math.cos(wingAngle);
+  const uwEndY = -wingLen * Math.sin(Math.abs(wingAngle) + 0.3);
+  ctx.quadraticCurveTo(
+    wingBaseX - wingLen * 0.4, -bodyWid - wingLen * 0.5,
+    uwEndX, uwEndY
+  );
+  ctx.stroke();
+
+  // Lower wing
+  ctx.beginPath();
+  ctx.moveTo(wingBaseX, bodyWid * 0.5);
+  const lwEndX = wingBaseX - wingLen * Math.cos(-wingAngle);
+  const lwEndY = wingLen * Math.sin(Math.abs(wingAngle) + 0.3);
+  ctx.quadraticCurveTo(
+    wingBaseX - wingLen * 0.4, bodyWid + wingLen * 0.5,
+    lwEndX, lwEndY
+  );
+  ctx.stroke();
+
+  ctx.globalAlpha = 1;
+  ctx.restore();
+
+  // Song rings (IDLE / REPRODUCING states)
+  if (state === 'IDLE' || state === 'REPRODUCING') {
+    const ringKey = ent.id;
+    let rings = birdSongRings.get(ringKey);
+    if (!rings) {
+      rings = [];
+      birdSongRings.set(ringKey, rings);
+    }
+
+    const spawnInterval = 1200 + (ent.id.charCodeAt(ent.id.length - 1) % 600);
+    if (!rings.lastSpawn || time * 1000 - rings.lastSpawn > spawnInterval) {
+      rings.push({ birth: time, maxAge: 2.5 });
+      rings.lastSpawn = time * 1000;
+    }
+
+    for (let i = rings.length - 1; i >= 0; i--) {
+      const ring = rings[i];
+      const age = time - ring.birth;
+      if (age > ring.maxAge) { rings.splice(i, 1); continue; }
+
+      const progress = age / ring.maxAge;
+      const radius = 4 + progress * 20;
+      const alpha = (1 - progress) * 0.35;
+
+      ctx.strokeStyle = COLORS.birdSong + alpha + ')';
+      ctx.lineWidth = 1 - progress * 0.6;
+      ctx.beginPath();
+      ctx.arc(cx, cz, radius, 0, Math.PI * 2);
+      ctx.stroke();
+    }
+
+    if (rings.length === 0) birdSongRings.delete(ringKey);
+  } else {
+    birdSongRings.delete(ent.id);
+  }
+
+  // Label
+  ctx.fillStyle = COLORS.label;
+  ctx.font = '7px JetBrains Mono';
+  ctx.textAlign = 'center';
+  ctx.fillText(state.toLowerCase(), cx, cz + 14);
+}
+
+function drawButterflyBehavioral(ctx, cx, cz, ent) {
+  // Butterflies use standard rendering — their movement is fast enough
+  // that behavioral prediction adds less value than for larger animals
+  const time = performance.now() * 0.008;
+  const wingFlap = Math.sin(time + cx * 0.1) * 0.5 + 0.5;
+
+  ctx.save();
+  ctx.translate(cx, cz);
+
+  // Wings (two triangles that flap)
+  const wingSpan = 5;
+  const wingH = 3 * (0.5 + wingFlap * 0.5);
+
+  ctx.fillStyle = COLORS.butterfly;
+  ctx.globalAlpha = 0.7 + wingFlap * 0.3;
+
+  // Left wing
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(-wingSpan, -wingH);
+  ctx.lineTo(-wingSpan * 0.3, -wingH * 0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Right wing
+  ctx.beginPath();
+  ctx.moveTo(0, 0);
+  ctx.lineTo(wingSpan, -wingH);
+  ctx.lineTo(wingSpan * 0.3, -wingH * 0.5);
+  ctx.closePath();
+  ctx.fill();
+
+  // Body
+  ctx.globalAlpha = 1;
+  ctx.fillStyle = '#7a5a8f';
+  ctx.beginPath();
+  ctx.arc(0, 0, 1.5, 0, Math.PI * 2);
+  ctx.fill();
+
+  ctx.restore();
+
+  // Pollinating glow
+  if (ent.state === 'POLLINATING') {
+    ctx.fillStyle = 'rgba(196, 166, 74, 0.15)';
+    ctx.beginPath();
+    ctx.arc(cx, cz, 10, 0, Math.PI * 2);
+    ctx.fill();
+  }
 }
 
 // ─── Songbird Rendering ──────────────────────────────
@@ -1141,6 +1471,31 @@ function drawParticles() {
     ctx.fill();
   }
   ctx.globalAlpha = 1.0;
+}
+
+// ─── Behavioral Model Stats Display ──────────────────────
+
+function updateBehaviorStats() {
+  const stats = behaviorStore.getAccuracyStats();
+  if (stats.length === 0) {
+    document.getElementById('blend-stat').textContent = '—';
+    return;
+  }
+
+  // Compute average blend factor across all entities
+  let totalBlend = 0;
+  let correctingCount = 0;
+  for (const stat of stats) {
+    const bf = parseFloat(stat.blendFactor);
+    totalBlend += bf;
+    if (bf < 0.5) correctingCount++;
+  }
+
+  const avgBlend = (totalBlend / stats.length).toFixed(2);
+  const label = correctingCount > 0 
+    ? `${avgBlend} (${correctingCount} corr)`
+    : avgBlend;
+  document.getElementById('blend-stat').textContent = label;
 }
 
 // ─── Utilities ────────────────────────────────────────

@@ -9,6 +9,9 @@
 
 > From hand-crafted species rules to allometrically-derived ecological dynamics,
 > with an ASAL-compatible substrate protocol for FM-guided ecosystem search.
+>
+> **Status:** Phase 1 complete ✅. Phases 2–3 (emergent dynamics validation, trait-based
+> search) are ⏸️ shelved until after the distributed engine scalability work.
 
 ---
 

@@ -78,6 +78,6 @@
 
   "engine_defaults": {
     "_comment": "Engine-level default values",
-    "default_dt": 0.1
+    "default_dt": 2.0
   }
 }

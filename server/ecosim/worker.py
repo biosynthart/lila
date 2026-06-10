@@ -51,7 +51,7 @@ logger = logging.getLogger("lila.worker")
 
 # -- Configuration -----------------------------------------------------------
 
-DEFAULT_TICK_RATE = 0.1     # seconds between ticks (10 Hz)
+DEFAULT_TICK_RATE = 2.0     # seconds between ticks (0.5 Hz — server is state oracle)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8001
 MAX_TICK_DRIFT = 0.05       # max acceptable drift before skipping sleep

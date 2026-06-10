@@ -485,7 +485,8 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 - JSON parsing: parse_species_from_json, missing key handling, full definitions file
 - Two-pool nutrient flow tests: mineralization, dissolution, leaching fluxes via NutrientPoolDynamicsHandler
 
-### Step 2.9 — Calibration & Regression Testing ❌
+### Step 2.9 — Calibration & Regression Testing ⏸️ Shelved
+Shelved in favor of scalability work (distributed engine, spatial hash, octree voxels). Revisit after distributed architecture is stable.
 - [ ] Compare DerivedParams output against audit table (manual verification)
 - [ ] `tests/test_nutrients.py` — two-pool nutrient flow tests (blocked on Step 2.6)
 - [ ] `tests/test_regression.py` — 2000-tick baseline comparison
@@ -509,7 +510,7 @@ When compiled, produce parameters matching the Step 2.1 audit within 5%.
 - `tests/test_nutrients.py` — two-pool nutrient flow tests (mineralization, dissolution, leaching)
 - `tests/test_reproduction_actor.py` — reproduction actor behavior tests
 
-**Pending:**
+**Shelved (scalability first):**
 - `tests/test_regression.py` — 2000-tick baseline comparison
 - `docs/trait_species_guide.md` — how to add species via trait vectors
 
@@ -790,7 +791,9 @@ Three streams feed the training pipeline:
 
 ---
 
-## Pending — Milestone 3: Emergent Dynamics Validation + Trait-Based Search
+## ⏸️ Shelved — Milestone 3: Emergent Dynamics Validation + Trait-Based Search
+
+Shelved in favor of scalability work. The distributed engine architecture is now the priority.
 
 **Goal:** Validate the trait architecture with long-running simulations of all 8 species. Expand the ASAL search pipeline from rate-tuning (Track A, shipped) to trait-based search (Track B).
 
@@ -814,7 +817,8 @@ All three species are defined in `examples/species_definitions.json`. Interactio
 
 **Mushroom** — closes the nutrient loop. diet_type: decomposer, targets organic_matter voxel layer. r_selected (clutch_size 5, fast generation). Accelerates mineralization rate locally. Expected: measurably faster soil recovery near decomposer clusters, 3–4× reduction in ecosystem recovery time after collapse events.
 
-### Emergent Dynamics Validation ❌
+### ⏸️ Shelved — Emergent Dynamics Validation
+Shelved. Revisit after distributed engine is stable.
 With 8 species, run 10,000-tick simulations documenting which interaction chains emerge without being coded:
 - [ ] Wolf-deer predation with population oscillations
 - [ ] Trophic cascade: wolves reduce deer → grass recovers → wildflowers bloom
@@ -823,7 +827,8 @@ With 8 species, run 10,000-tick simulations documenting which interaction chains
 - [ ] Cross-trophic competition: songbirds and butterflies competing for fruiting flowers
 - [ ] Thermal range exclusions in extreme biome settings
 
-### Trait-Based Search (Track B)
+### ⏸️ Shelved — Trait-Based Search (Track B)
+Shelved. Revisit after distributed engine is stable.
 
 Expand the shipped search pipeline from 17-dim rate tuning to trait-space search:
 
@@ -840,15 +845,86 @@ Expand the shipped search pipeline from 17-dim rate tuning to trait-space search
 
 **Physical plausibility constraints** — square-cube law, thermal homeostasis limits, trophic sanity checks on θ.
 
-### Milestone 3 Deliverables
-- Three new species as JSON trait vectors (zero engine code)
-- Updated interaction templates with parameterized mass-ratio windows
-- `examples/temperate_meadow_8sp.json` — 8-species trait-based world
-- Emergent dynamics validation report
-- Expanded `theta.py` with EcoTopology and EcoAdapt variants
-- `lila_search/target.py` — CMA-ES target search
-- `lila_search/open_ended.py` — temporal novelty search
-- `docs/asal_substrate_guide.md`
+### Milestone 3 Deliverables (Shelved)
+All items shelved until after scalability work.
+- Three new species as JSON trait vectors (zero engine code) ✅ shipped, validation pending
+- Updated interaction templates with parameterized mass-ratio windows ✅ shipped
+- `examples/temperate_meadow_8sp.json` — 8-species trait-based world ✅ shipped
+- Emergent dynamics validation report ⏸️ shelved
+- Expanded `theta.py` with EcoTopology and EcoAdapt variants ⏸️ shelved
+- `lila_search/target.py` — CMA-ES target search ⏸️ shelved
+- `lila_search/open_ended.py` — temporal novelty search ⏸️ shelved
+- `docs/asal_substrate_guide.md` ⏸️ shelved
+
+---
+
+## Active Work — Distributed Simulation Engine (Phase 1 In Progress)
+
+**Goal:** Scale the simulation beyond a single engine instance by partitioning the world into spatially separate **tiles** that communicate via efficient message passing. Target: 5×5 tile grid, each running a 32×32 voxel grid with up to 50 initial entities.
+
+**Reference doc:** [`docs/DISTRIBUTED_ENGINE_ARCHITECTURE.md`](docs/DISTRIBUTED_ENGINE_ARCHITECTURE.md)
+
+### Architecture
+
+```
+┌─────────────────────────────────────────────────────────────┐
+│                    WorldOrchestrator                         │
+│                                                              │
+│  ┌──────────┐   ┌──────────┐   ┌──────────┐                │
+│  │ Tile(0,0) │   │ Tile(0,1) │   │ Tile(0,2) │   ...         │
+│  │ Engine   │   │ Engine   │   │ Engine   │                  │
+│  │ 32×32    │   │ 32×32    │   │ 32×32    │                  │
+│  │ ≤50 ents │   │ ≤50 ents │   │ ≤50 ents │                  │
+│  └────┬─────┘   └────┬─────┘   └────┬─────┘                  │
+│       │              │              │                         │
+│       └──────────┬───┴──────────────┘                         │
+│                  │  Cross-tile messages (shared memory)        │
+│                  ▼                                             │
+│           Message Bus                                         │
+│    MigrationMessage, GhostUpdate, GlobalEvent                 │
+└─────────────────────────────────────────────────────────────┘
+```
+
+### Completed ✅
+
+| Step | Description | Deliverable |
+|------|-------------|-------------|
+| 1.1 | Message types and config dataclasses | `distributed/messages.py`, `distributed/config.py` |
+| 1.2 | Tile class with ghost injection/removal, migration detection | `distributed/tile.py` (350+ lines) |
+| 1.3 | WorldOrchestrator tick sync + message routing + packet assembly | `distributed/orchestrator.py` (450+ lines) |
+| 1.4 | TileWorldLayout for per-tile config generation from master spec | `distributed/world_layout.py` (200+ lines) |
+| 1.5 | Package init with public API exports | `distributed/__init__.py` |
+| 1.6 | Test suite: config, messages, ghost IDs, layout partitioning, coordinate mapping, ghost mirroring | `tests/test_distributed.py` (32 tests) |
+
+### Key Design Decisions
+
+- **Tile** — wraps one `EcosystemEngine`, adds boundary awareness via ghost injection/removal and migration detection. Zero modifications to the core engine.
+- **Ghost entities** — read-only replicas of boundary entities injected into neighbor tiles' spatial indexes. Marked with `_ghost: true` prefix IDs (`ghost:{row}:{col}:{eid}`). Excluded from tick packets.
+- **Migration** — detected after each tick when entity positions exceed grid bounds. Applied by orchestrator (remove from source, insert into target with remapped local coordinates).
+- **Global ↔ local coordinates** — entities use local coords within tiles; orchestrator maps to global for client rendering and migration routing.
+- **World layout generation** — `TileWorldLayout` partitions master spec entities/water sources across tiles by global position.
+
+### Remaining Phase 1 Work
+
+| Step | Description |
+|------|-------------|
+| 1.7 | Integration tests with real EcosystemEngine instances (ghost injection during tick, migration across tiles) |
+| 1.8 | Demo script: 5×5 tile world with entity migration visualization |
+| 1.9 | Browser visualizer updates for global coordinate rendering and tile boundary display |
+
+### Phase 2: Multi-Node Preparation (Future)
+- Message serialization format — compact binary protocol
+- Network transport abstraction — swap shared memory for TCP/UDP
+- Latency compensation — speculative execution at boundaries
+
+### Phase 3: Multi-Node Deployment (Future)
+- Distributed orchestrator with node assignment
+- Fault tolerance — engine restart with state replay from effect log
+- Dynamic rebalancing when population density shifts
+
+**Dependencies:**
+- Spatial hash (SpatialIndex strategy swap) — needed for efficient boundary queries
+- OctreeVoxelGrid (issue #68, phases 3–4) — sparse storage reduces message volume at boundaries
 
 ---
 
@@ -899,8 +975,12 @@ Expand the shipped search pipeline from 17-dim rate tuning to trait-space search
 - Behavior-level adapter (ML-influenced guard conditions via trait context)
 - Narrative-level adapter (ecosystem-scale intelligence, event injection)
 - Bounded fields for dense actor clusters (insect swarms, grass patches)
-- Spatial hash for O(1) neighbor queries (current brute-force is O(n²))
 - Tick-rate/bandwidth optimization
+
+**Active work (promoted from Future):**
+- Spatial hash for O(1) neighbor queries (SpatialIndex strategy swap) — currently brute-force O(n²)
+- OctreeVoxelGrid implementation (issue #68, phases 3–4) — same VoxelGrid protocol interface
+- Distributed simulation engine — spatially partitioned engines with efficient message passing; single-node multi-engine first
 
 ### ASAL Extensions
 - Video-language FM evaluation (temporal dynamics without frame sampling)
