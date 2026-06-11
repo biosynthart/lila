@@ -194,6 +194,16 @@ class EcosystemEngine:
         self._spawns: list[dict[str, Any]] = []
         self._removals: list[str] = []
 
+        # ── Client agency reconciliation ──
+        # Entities whose client-reported positions were absorbed this tick.
+        # Next packet will include _ack: true for these entities so the
+        # client knows the server heard it and adjusted its expectation.
+        self._pending_acks: set[str] = set()
+        # Client-reported reproduction events pending absorption.
+        self._pending_client_repro: list[dict[str, Any]] = []
+        # Client-reported interaction events (consumption, predation, pollination).
+        self._pending_client_events: list[dict[str, Any]] = []
+
         # ── Effect bus + world-process handlers ──
         self.effect_bus = EffectBus()
         register_default_world_handlers(self.effect_bus)
@@ -666,6 +676,362 @@ class EcosystemEngine:
         self._events.append({"type": "RAIN", "tick": self.tick, **event})
 
     # ═══════════════════════════════════════════════════════════════════════
+    # Client Agency Reconciliation — Absorb client-reported state
+    # ═══════════════════════════════════════════════════════════════════════
+
+    def absorb_client_positions(
+        self, positions: dict[str, list[float]], divergence_multiplier: float = 2.5,
+    ) -> None:
+        """Absorb client-reported entity positions into server state.
+
+        For each entity, compare reported position against simulated position.
+        If divergence < threshold (species speed × dt_server_tick × multiplier):
+            soft-nudge internal position toward reported over a few ticks.
+        If divergence > threshold:
+            snap to reported and mark for _ack on next packet.
+
+        The server never abandons its goals — state vars, discrete states,
+        and ecological relationships remain authoritative. Only positions shift.
+
+        Args:
+            positions: Mapping of entity_id → [x, y, z] from client heartbeat.
+            divergence_multiplier: How many "expected travel distances" before snap.
+                Default 2.5 means an entity can deviate up to 2.5× its max
+                travel distance before the server snaps to client truth.
+        """
+        import math as _math
+
+        for eid, reported_pos in positions.items():
+            entity = self.entities.get(eid)
+            if entity is None or not is_alive(entity):
+                continue  # Entity may have been removed server-side
+
+            params = self._get_params(entity)
+            sim_pos = entity["position"]
+
+            dx = reported_pos[0] - sim_pos[0]
+            dz = reported_pos[2] - sim_pos[2]
+            divergence = _math.sqrt(dx * dx + dz * dz)
+
+            if divergence < 0.1:
+                continue  # Negligible drift — no action needed
+
+            # Compute threshold from species speed × effective tick interval.
+            # At 0.5 Hz server tick, dt ≈ 2.0s. Speed is in world units/sec.
+            if params and hasattr(params, "speed"):
+                max_travel = params.speed * (1.0 / self._effective_hz()) * divergence_multiplier
+            else:
+                max_travel = 10.0 * divergence_multiplier  # generous default for sessile
+
+            if divergence <= max_travel:
+                # Soft nudge — move server position partway toward client.
+                # This keeps the two simulations loosely coupled without snapping.
+                nudge_factor = 0.3  # absorb 30% of deviation per heartbeat
+                sim_pos[0] += dx * nudge_factor
+                sim_pos[2] += dz * nudge_factor
+            else:
+                # Snap — client deviated significantly. Absorb its position
+                # and acknowledge on next packet so the client knows we heard it.
+                sim_pos[0] = reported_pos[0]
+                sim_pos[2] = reported_pos[2]
+                self._pending_acks.add(eid)
+
+    def absorb_client_events(self, events: list[dict[str, Any]]) -> None:
+        """Absorb client-reported interaction and lifecycle events.
+
+        The client may report reproduction, consumption, predation,
+        or pollination events that occurred through its local agency.
+        The server validates basic sanity (entities exist, are alive)
+        and applies the ecological effects. Detailed proximity checks
+        are skipped — the client's perception is trusted within bounds.
+
+        Event types:
+            - "repro": Client-side reproduction. Spawns offspring,
+              applies parent costs. Rate-capped per species.
+            - "consumption": Herbivory event. Applies hunger relief
+              to consumer, growth/health damage to plant.
+            - "predation": Predation event. Removes prey, feeds predator,
+              deposits organic matter at kill site. Rate-capped.
+            - "pollination": Pollinator visited a flower. Boosts plant
+              health, relieves pollinator hunger/hydration.
+
+        Args:
+            events: List of event dicts from client heartbeat.
+        """
+        import random as _random
+
+        for ev in events:
+            etype = ev.get("type", "")
+
+            if etype == "repro":
+                self._absorb_reproduction(ev)
+            elif etype == "consumption":
+                self._absorb_consumption(ev)
+            elif etype == "predation":
+                self._absorb_predation(ev)
+            elif etype == "pollination":
+                self._absorb_pollination(ev)
+
+    def _absorb_reproduction(self, ev: dict[str, Any]) -> None:
+        """Absorb a client-reported reproduction event."""
+        parent_id = ev.get("parent_id", "")
+        parent = self.entities.get(parent_id)
+        if not parent or not is_alive(parent):
+            return
+
+        params = self._get_params(parent)
+        if params is None:
+            return
+
+        # Sanity: parent must have high reproductive drive (server-side truth)
+        sv = parent["state_vars"]
+        if sv.get("reproductive_drive", 0) <= params.repro_drive_threshold:
+            return  # Server doesn't think parent is ready — defer
+
+        # Rate cap: track repro events per species to prevent runaway spawning
+        species_id = parent.get("species", "unknown")
+        recent_repros = sum(
+            1 for e in self._events
+            if e.get("type") == "REPRODUCTION"
+            and e.get("source_id", "").startswith(species_id)
+            and abs(e.get("tick", 0) - self.tick) < 50
+        )
+        max_repros = max(1, params.clutch_size * 3) if params.clutch_size else 3
+        if recent_repros >= max_repros:
+            return  # Rate capped — try again later
+
+        # Apply parent costs
+        sv["reproductive_drive"] = 0.0
+        sv["energy"] = max(0.0, sv.get("energy", 1.0) - params.parent_energy_cost)
+
+        # Spawn offspring at client-reported position
+        pos = ev.get("client_position", list(parent["position"]))
+        clutch_size = ev.get("offspring_count", params.clutch_size or 1)
+        meta = parent.get("metadata", {})
+
+        for i in range(clutch_size):
+            new_x = pos[0] + _random.uniform(-1.0, 1.0)
+            new_z = pos[2] + _random.uniform(-1.0, 1.0)
+            child_id = f"{parent_id}_child_{self.tick}_{_random.randint(0, 999)}"
+
+            offspring_sv: dict[str, float] = {
+                "hunger": sv.get("hunger", 0.5) * 0.6,
+                "energy": max(0.3, sv.get("energy", 1.0) * 0.8),
+                "hydration": sv.get("hydration", 1.0),
+                "health": max(0.3, sv.get("health", 1.0) * 0.9),
+                "reproductive_drive": 0.0,
+                "age": 0.0,
+            }
+
+            self._spawns.append({
+                "id": child_id,
+                "type": parent["type"],
+                "species": parent.get("species"),
+                "position": [new_x, pos[1] or 0.0, new_z],
+                "metadata": dict(meta),
+                "state_vars": offspring_sv,
+                "skeleton_id": parent.get("skeleton_id"),
+                "sex": _random.choice(("male", "female")),
+                "initial_attrs": {},
+            })
+
+        self._events.append({
+            "type": "REPRODUCTION",
+            "tick": self.tick,
+            "source_id": parent_id,
+            "target_id": child_id if clutch_size == 1 else None,
+            "position": pos,
+            "client_reported": True,
+        })
+
+    def _absorb_consumption(self, ev: dict[str, Any]) -> None:
+        """Absorb a client-reported herbivory event."""
+        source_id = ev.get("source_id", "")
+        target_id = ev.get("target_id", "")
+
+        consumer = self.entities.get(source_id)
+        plant = self.entities.get(target_id)
+        if not consumer or not plant:
+            return
+        if not is_alive(consumer) or not is_alive(plant):
+            return
+
+        params = self._get_params(consumer)
+        if params is None:
+            return
+
+        # Apply hunger relief to consumer
+        sv = consumer["state_vars"]
+        sv["hunger"] = max(0.0, sv.get("hunger", 0) - params.herbivory_relief)
+
+        # Apply growth/health damage to plant
+        psv = plant["state_vars"]
+        rate = self.rate_consumption
+        psv["growth"] = max(
+            0.0, psv.get("growth", 1.0) - params.consumption_damage_growth * rate,
+        )
+        psv["health"] = max(
+            0.0, psv.get("health", 1.0) - params.consumption_damage_health * rate,
+        )
+
+        self._events.append({
+            "type": "CONSUMPTION",
+            "tick": self.tick,
+            "source_id": source_id,
+            "target_id": target_id,
+            "position": ev.get("position", list(plant["position"])),
+            "client_reported": True,
+        })
+
+    def _absorb_predation(self, ev: dict[str, Any]) -> None:
+        """Absorb a client-reported predation event."""
+        source_id = ev.get("source_id", "")
+        target_id = ev.get("target_id", "")
+
+        predator = self.entities.get(source_id)
+        prey = self.entities.get(target_id)
+        if not predator or not prey:
+            return
+        if not is_alive(predator) or not is_alive(prey):
+            return
+
+        params = self._get_params(predator)
+        if params is None:
+            return
+
+        # Rate cap: max kills per predator per N ticks
+        recent_kills = sum(
+            1 for e in self._events
+            if e.get("type") == "PREDATION"
+            and e.get("source_id") == source_id
+            and abs(e.get("tick", 0) - self.tick) < 100
+        )
+        if recent_kills >= 3:
+            return  # Rate capped
+
+        # Predator gains
+        psv = predator["state_vars"]
+        psv["hunger"] = max(0.0, psv.get("hunger", 0) - params.predation_relief)
+        psv["energy"] = min(1.0, psv.get("energy", 0) + params.predation_energy_gain)
+
+        # Prey removed
+        kill_pos = ev.get("kill_position", list(prey["position"]))
+        self._removals.append(target_id)
+
+        # Deposit organic matter at kill site
+        deposit_amount = min(
+            0.3, (params.metabolic_rate * 0.1 if hasattr(params, "metabolic_rate") else 0.05),
+        )
+        gx, gy, gz = self.env.voxels.world_to_grid(*kill_pos)
+        self.env.voxels.add("organic_matter", gx, gy, gz, deposit_amount)
+
+        self._events.append({
+            "type": "PREDATION",
+            "tick": self.tick,
+            "source_id": source_id,
+            "target_id": target_id,
+            "position": kill_pos,
+            "client_reported": True,
+        })
+
+    def _absorb_pollination(self, ev: dict[str, Any]) -> None:
+        """Absorb a client-reported pollination event."""
+        source_id = ev.get("source_id", "")
+        target_id = ev.get("target_id", "")
+
+        pollinator = self.entities.get(source_id)
+        plant = self.entities.get(target_id)
+        if not pollinator or not plant:
+            return
+        if not is_alive(pollinator) or not is_alive(plant):
+            return
+
+        params = self._get_params(pollinator)
+        if params is None or not getattr(params, "floral_affinity", False):
+            return
+
+        # Plant health boost
+        psv = plant["state_vars"]
+        psv["health"] = min(1.0, psv.get("health", 0) + 0.05)
+
+        # Pollinator hunger/hydration relief
+        psv2 = pollinator["state_vars"]
+        relief = getattr(params, "pollination_relief", 0.08)
+        psv2["hunger"] = max(0.0, psv2.get("hunger", 0) - relief)
+        if "hydration" in psv2:
+            psv2["hydration"] = min(1.0, psv2.get("hydration", 0) + relief * 0.5)
+
+        self._events.append({
+            "type": "POLLINATION",
+            "tick": self.tick,
+            "source_id": source_id,
+            "target_id": target_id,
+            "position": ev.get("position", list(plant["position"])),
+            "client_reported": True,
+        })
+
+    def get_species_definitions(self) -> dict[str, Any]:
+        """Build lightweight species reference for client-side agency.
+
+        Derived from CompiledEcology at server init. Gives the client
+        everything it needs for local target selection without exposing
+        full simulation internals (allometric scaling, interaction matrix,
+        guard thresholds).
+
+        Returns:
+            Dict mapping species_id → { type, diet_order, flee_targets,
+                is_pollinator, pollination_targets, has_roost_affinity,
+                mating_radius }.
+        """
+        result: dict[str, Any] = {}
+
+        for species_id, params in self.compiled.derived_params.items():
+            entry: dict[str, Any] = {
+                "type": params.entity_class,
+                "movement_speed": round(params.speed, 4),
+                "diet_order": [],
+                "flee_targets": [],
+                "is_pollinator": bool(getattr(params, "floral_affinity", False)),
+                "pollination_targets": [],
+                "has_roost_affinity": bool(getattr(params, "roost_affinity", False)),
+                "mating_radius": params.sensory_range,
+            }
+
+            # Diet order: list of [species_id, preference_rank]
+            diet_order = self.compiled.get_diet_order(species_id)
+            if diet_order:
+                entry["diet_order"] = [[s, p] for s, p in diet_order]
+
+            # Flee targets from interaction matrix
+            flee_targets = self.compiled.get_flee_targets(species_id)
+            if flee_targets:
+                entry["flee_targets"] = list(flee_targets)
+
+            # Pollination targets (species this pollinator can visit)
+            if entry["is_pollinator"]:
+                for other_species in self.compiled.derived_params:
+                    interactions = self.compiled.get_interactions(
+                        species_id, other_species,
+                    )
+                    if interactions and any(
+                        ix.interaction_type == "pollination"
+                        for ix in interactions
+                    ):
+                        entry["pollination_targets"].append(other_species)
+
+            result[species_id] = entry
+
+        return result
+
+    def _effective_hz(self) -> float:
+        """Return effective server tick rate in Hz.
+
+        Used by absorption to compute expected travel distance thresholds.
+        Defaults to 0.5 (2-second ticks) for intent-based mode.
+        """
+        return 0.5
+
+    # ═══════════════════════════════════════════════════════════════════════
     # Phase 6: Motor Inference (BYOM)
     # ═══════════════════════════════════════════════════════════════════════
 
@@ -698,40 +1064,169 @@ class EcosystemEngine:
     # ═══════════════════════════════════════════════════════════════════════
 
     def _build_tick_packet(self, dt: float) -> dict[str, Any]:
-        """Build delta-encoded tick packet for WebSocket transmission."""
+        """Build intent-based tick packet for client agency.
+
+        Unlike the old position-authoritative format, this packet sends:
+        - **State** (discrete state machine value)
+        - **Drives** (continuous desire variables: hunger, thirst, energy,
+          reproductive_drive) — these are *intent*, not commands
+        - **Motion latent** (4D vector from motor model encoding how the
+          entity should feel moving right now)
+        - **Reference position** (where server expects entity to be — used
+          for reconciliation gravity, not as authoritative command)
+        - **Eligibility flags** (_can_consume, _can_predate, etc.) —
+          permission gates derived from server-side state checks
+        - **_ack** flag if server absorbed client deviation this tick
+
+        The client uses drives + latent + eligibility to generate local
+        movement and interaction behavior. It reports outcomes back via
+        heartbeat messages.
+        """
         packet: dict[str, Any] = {"tick": self.tick, "dt": dt}
         updates = []
         for e in self.entities.values():
+            if not is_alive(e):
+                continue  # Don't send dead/dying entities
+
+            eid = e["id"]
+            sv = e["state_vars"]
+            params = self._get_params(e)
+
             update: dict[str, Any] = {
-                "id": e["id"], "state": e["state"],
-                "position": [round(v, 4) for v in e["position"]],
-                "velocity": [round(v, 4) for v in e.get("velocity", [0, 0, 0])],
-                "state_vars": {k: round(v, 4) for k, v in e["state_vars"].items()},
+                "id": eid,
+                "state": e["state"],
+                # Reference position — gravity well for reconciliation,
+                # not an authoritative command. Client may deviate.
+                "ref_position": [round(v, 4) for v in e["position"]],
+                # Drives — continuous desire variables that encode intent
+                "drive": {
+                    "hunger": round(sv.get("hunger", 0.0), 4),
+                    "energy": round(sv.get("energy", 1.0), 4),
+                    "hydration": round(sv.get("hydration", 1.0), 4),
+                    "health": round(sv.get("health", 1.0), 4),
+                },
             }
-            if e.get("skeleton_id"):
-                update["motion_latent"] = e.get("motion_latent", [0.0, 0.0, 0.0, 0.0])
+
+            # Include reproductive drive for mobile consumers
+            if params and params.diet_type not in ("autotroph", "decomposer"):
+                update["drive"]["reproductive_drive"] = round(
+                    sv.get("reproductive_drive", 0.0), 4,
+                )
+
+            # Include plant-specific state vars for producers
+            if params and params.diet_type == "autotroph":
+                update["drive"]["growth"] = round(sv.get("growth", 0.0), 4)
+                update["drive"]["nutrient_store"] = round(
+                    sv.get("nutrient_store", 0.0), 4,
+                )
+
+            # Motion latent — 4D vector encoding movement disposition
+            if e.get("skeleton_id") or (params and params.speed > 0):
+                update["motion_latent"] = e.get(
+                    "motion_latent", [0.0, 0.0, 0.0, 0.0],
+                )
+
+            # Eligibility flags — server-side permission gates.
+            # These tell the client what interactions are *possible* given
+            # current state vars and discrete state. The client decides
+            # whether conditions are met locally (proximity, etc.).
+            if params:
+                diet = params.diet_type
+                state = e["state"]
+
+                # Herbivory: FORAGING consumer with sufficient hunger
+                if diet in ("herbivore", "omnivore"):
+                    update["_can_consume"] = (
+                        state == "FORAGING"
+                        and sv.get("hunger", 0) > 0.2
+                    )
+
+                # Predation: HUNTING carnivore/insectivore with hunger
+                if diet in ("carnivore", "insectivore"):
+                    update["_can_predate"] = (
+                        state == "HUNTING"
+                        and sv.get("hunger", 0) > 0.3
+                    )
+                elif diet == "omnivore":
+                    # Omnivores can opportunistically predate while FORAGING
+                    update["_can_predate"] = state in ("HUNTING", "FORAGING")
+
+                # Pollination: pollinator not lingering, not on cooldown
+                if getattr(params, "floral_affinity", False):
+                    update["_can_pollinate"] = (
+                        e.get("_linger", 0) <= 0
+                        and e.get("_pollination_cooldown", 0) <= 0
+                        and state != "WANDERING"
+                    )
+
+                # Reproduction: female with drive above threshold
+                if diet not in ("autotroph", "decomposer"):
+                    update["_repro_eligible"] = (
+                        e.get("sex") == "female"
+                        and sv.get("reproductive_drive", 0) > params.repro_drive_threshold
+                        and state not in ("DYING", "REPRODUCING", "SWARMING")
+                    )
+
+                # Drinking: entity can drink when near water
+                if diet not in ("autotroph", "decomposer"):
+                    update["_can_drink"] = (
+                        sv.get("hydration", 1.0) < 0.7
+                        or state == "DRINKING"
+                    )
+
+            # Plant spreading eligibility
+            if params and params.diet_type == "autotroph":
+                update["_spread_eligible"] = (
+                    sv.get("health", 1.0) > 0.5
+                    and sv.get("hydration", 1.0) > 0.3
+                    and sv.get("growth", 0.0) > 0.4
+                    and e.get("_spread_cooldown", 0) <= 0
+                )
+
+            # Acknowledgment flag — server absorbed client deviation
+            if eid in self._pending_acks:
+                update["_ack"] = True
+
             updates.append(update)
+
         packet["entity_updates"] = updates
+
+        # Clear pending acks after including them in this packet
+        self._pending_acks.clear()
+
+        # Spawns — new entities entering the simulation.
+        # Client renders these immediately; they start with full intent data.
         if self._spawns:
             packet["entity_spawns"] = [
-                {"id": s["id"], "type": s["type"], "species": s.get("species"),
-                 "position": [round(v, 4) for v in s["position"]],
-                 "skeleton_id": s.get("skeleton_id"), "state": s["state"],
-                 "state_vars": {k: round(v, 4) for k, v in s["state_vars"].items()},
-                 "motion_latent": [0.0, 0.0, 0.0, 0.0]}
+                {
+                    "id": s["id"],
+                    "type": s["type"],
+                    "species": s.get("species"),
+                    "ref_position": [round(v, 4) for v in s["position"]],
+                    "skeleton_id": s.get("skeleton_id"),
+                    "state": s["state"],
+                    "drive": {k: round(v, 4) for k, v in s["state_vars"].items()},
+                    "motion_latent": [0.0, 0.0, 0.0, 0.0],
+                }
                 for s in self._spawns
             ]
+
         if self._removals:
             packet["entity_removals"] = list(self._removals)
         if self._events:
             packet["events"] = self._events
+
+        # Voxel deltas — moisture layer for client heatmap rendering.
+        # Client doesn't need full 5-layer voxel data; just moisture for visuals.
         voxel_packet = self.env.voxels.get_delta_packet()
         if voxel_packet:
             packet["voxel_deltas"] = voxel_packet
+
         if self.env.water_sources:
             packet["water_sources"] = [
                 {"position": ws["position"], "radius": ws["radius"],
                  "water_level": ws["water_level"]}
                 for ws in self.env.water_sources
             ]
+
         return packet

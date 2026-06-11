@@ -51,10 +51,11 @@ logger = logging.getLogger("lila.worker")
 
 # -- Configuration -----------------------------------------------------------
 
-DEFAULT_TICK_RATE = 0.1     # seconds between ticks (10 Hz)
+DEFAULT_TICK_RATE = 2.0     # seconds between ticks (0.5 Hz — intent-based)
 DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8001
 MAX_TICK_DRIFT = 0.05       # max acceptable drift before skipping sleep
+HEARTBEAT_INTERVAL = 1.0    # seconds between client heartbeat sends
 
 
 # -- Session -----------------------------------------------------------------
@@ -141,6 +142,26 @@ class SimulationSession:
             "Rain triggered at tick %d (intensity=%.1f)",
             self.engine.tick, intensity,
         )
+
+    def absorb_heartbeat(self, msg: dict[str, Any]) -> None:
+        """Absorb client heartbeat — positions and interaction events.
+
+        Heartbeat messages from the client carry:
+          - positions: { entity_id: [x, y, z], ... } — for reconciliation
+          - events: [{ type, source_id, target_id, ... }, ...] —
+            client-reported interactions (repro, consumption, predation)
+
+        The server absorbs these into its simulation state through the
+        engine's absorption layer. See EcosystemEngine.absorb_client_positions()
+        and absorb_client_events() for details.
+        """
+        positions = msg.get("positions", {})
+        if positions:
+            self.engine.absorb_client_positions(positions)
+
+        events = msg.get("events", [])
+        if events:
+            self.engine.absorb_client_events(events)
 
     def step(self) -> dict[str, Any]:
         """Run a single tick and return the packet."""
@@ -237,6 +258,8 @@ CONTROL_HANDLERS = {
     "resume": lambda session, _msg: session.resume(),
     "shutdown": lambda session, _msg: session.stop(),
     "rain": lambda session, msg: session.rain(msg.get("intensity", 0.5)),
+    # Client agency heartbeat — positions + interaction events
+    "heartbeat": lambda session, msg: session.absorb_heartbeat(msg),
 }
 
 
@@ -325,17 +348,23 @@ async def handle_connection(websocket) -> None:
         len(world_config.get("entities", [])),
     )
 
-    # Step 2: Send acknowledgement
+    # Step 2: Initialize session (before ack so we can include species defs)
+    session = SimulationSession(world_config)
+
+    # Build species definitions for client-side agency
+    species_defs = session.engine.get_species_definitions()
+
+    # Step 3: Send acknowledgement with species reference
     ack = json.dumps({
         "type": "session_started",
         "session_id": session_id,
         "tick_rate": DEFAULT_TICK_RATE,
         "entity_count": len(world_config.get("entities", [])),
+        "species": species_defs,  # lightweight species reference for client
     })
     await websocket.send(ack)
 
-    # Step 3: Initialize session and run
-    session = SimulationSession(world_config)
+    # Step 4: Run tick loop and client listener as concurrent tasks
 
     # Run tick loop and client listener as concurrent tasks
     tick_task = asyncio.create_task(
@@ -441,6 +470,18 @@ async def start_server(
     else:
         logger.warning("Visualizer not found — HTTP will return 404")
 
+    # MIME types for static file serving
+    _MIME = {
+        ".html": "text/html; charset=utf-8",
+        ".css":  "text/css; charset=utf-8",
+        ".js":   "application/javascript; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".png":  "image/png",
+        ".jpg":  "image/jpeg",
+        ".svg":  "image/svg+xml",
+        ".ico":  "image/x-icon",
+    }
+
     world_json = None
     if world_path:
         world_json = world_path.read_bytes()
@@ -471,6 +512,30 @@ async def start_server(
                     world_json,
                 )
             return Response(404, "Not Found", Headers(), b"World definition not found")
+
+        # Serve arbitrary static files from viz directory (css/, js/, etc.)
+        if viz_path:
+            import urllib.parse
+            safe_path = urllib.parse.unquote(request.path.lstrip("/"))
+            file_path = (viz_path / safe_path).resolve()
+            # Ensure the resolved path is still under viz_path (no directory traversal)
+            try:
+                file_path.relative_to(viz_path.resolve())
+            except ValueError:
+                return Response(403, "Forbidden", Headers(), b"Access denied")
+
+            if file_path.is_file():
+                ext = file_path.suffix.lower()
+                content_type = _MIME.get(ext, "application/octet-stream")
+                try:
+                    data = file_path.read_bytes()
+                    return Response(
+                        200, "OK",
+                        Headers({"Content-Type": content_type}),
+                        data,
+                    )
+                except OSError as e:
+                    logger.warning("Failed to read %s: %s", safe_path, e)
 
         return Response(404, "Not Found", Headers(), b"Not found")
 
