@@ -448,6 +448,18 @@ async def start_server(
     else:
         logger.warning("demo_world.json not found — /world.json will 404")
 
+    # Content-type map for static assets
+    _CONTENT_TYPES = {
+        ".html": "text/html; charset=utf-8",
+        ".js":   "application/javascript; charset=utf-8",
+        ".css":  "text/css; charset=utf-8",
+        ".json": "application/json; charset=utf-8",
+        ".png":  "image/png",
+        ".jpg":  "image/jpeg",
+        ".svg":  "image/svg+xml",
+        ".woff2": "font/woff2",
+    }
+
     # HTTP request handler (runs before WebSocket upgrade)
     async def process_request(connection, request):
         """Serve static files on non-WebSocket paths."""
@@ -471,6 +483,25 @@ async def start_server(
                     world_json,
                 )
             return Response(404, "Not Found", Headers(), b"World definition not found")
+
+        # Serve other static assets from the viz directory (e.g. .js, .css)
+        if viz_path:
+            # Strip leading slash for relative path lookup
+            rel = request.path.lstrip("/")
+            safe_path = (viz_path / rel).resolve()
+            # Prevent directory traversal outside viz_path
+            if str(safe_path).startswith(str(viz_path.resolve())) and safe_path.is_file():
+                ext = pathlib.Path(rel).suffix.lower()
+                ct = _CONTENT_TYPES.get(ext, "application/octet-stream")
+                try:
+                    body = safe_path.read_bytes()
+                    return Response(
+                        200, "OK",
+                        Headers({"Content-Type": ct}),
+                        body,
+                    )
+                except OSError:
+                    pass
 
         return Response(404, "Not Found", Headers(), b"Not found")
 
