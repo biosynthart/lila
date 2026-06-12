@@ -1,0 +1,26 @@
+[project]
+name = "lila-client"
+version = "0.1.0"
+description = "līlā — Python pygame debug client"
+requires-python = ">=3.12"
+license = { text = "Apache-2.0" }
+authors = [{ name = "BioSynthArt Studios LLC" }]
+
+dependencies = [
+    "pygame>=2.5",
+    "websockets>=14.0",
+]
+
+[project.scripts]
+lila-client = "lila_client.main:main"
+lila-replay = "lila_client.replay:main"
+
+[dependency-groups]
+dev = []
+
+[build-system]
+requires = ["setuptools>=68.0"]
+build-backend = "setuptools.build_meta"
+
+[tool.setuptools.packages.find]
+include = ["lila_client*"]

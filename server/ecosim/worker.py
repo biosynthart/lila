@@ -46,6 +46,13 @@ from typing import Any
 
 from .adapters import create_adapter
 from .engine import EcosystemEngine
+from .telemetry import (
+    TelemetryBus,
+    TelemetrySubscriber,
+    build_telemetry_response,
+    log_absorption,
+    wrap_tick_packet,
+)
 
 logger = logging.getLogger("lila.worker")
 
@@ -56,6 +63,10 @@ DEFAULT_HOST = "0.0.0.0"
 DEFAULT_PORT = 8001
 MAX_TICK_DRIFT = 0.05       # max acceptable drift before skipping sleep
 HEARTBEAT_INTERVAL = 1.0    # seconds between client heartbeat sends
+
+# Global telemetry registry — maps session_id → TelemetryBus.
+# Allows /logs and /telemetry endpoints to access active sessions.
+_telemetry_registry: dict[str, TelemetryBus] = {}
 
 
 # -- Session -----------------------------------------------------------------
@@ -115,6 +126,9 @@ class SimulationSession:
         self.ticks_completed = 0
         self.total_step_time = 0.0
 
+        # Telemetry bus (injected by worker, optional)
+        self.telemetry: TelemetryBus | None = None
+
     @property
     def is_running(self) -> bool:
         return self._running
@@ -162,6 +176,15 @@ class SimulationSession:
         events = msg.get("events", [])
         if events:
             self.engine.absorb_client_events(events)
+
+        # Log absorption for coherence debugging
+        if self.telemetry and (positions or events):
+            log_absorption(
+                self.telemetry,
+                tick=self.engine.tick,
+                positions=positions,
+                events=events,
+            )
 
     def step(self) -> dict[str, Any]:
         """Run a single tick and return the packet."""
@@ -211,9 +234,16 @@ class SimulationSession:
 
                 if not self._paused:
                     packet = self.step()
-                    packet["session_id"] = self.world_config.get(
-                        "session_id", "unknown"
-                    )
+                    session_id = self.world_config.get("session_id", "unknown")
+                    packet["session_id"] = session_id
+
+                    # Telemetry: log tick events (intent_emit, spawns, removals)
+                    if self.telemetry:
+                        wrap_tick_packet(self.telemetry, packet, session_id)
+                        # Piggyback telemetry events on tick packets for client streaming
+                        recent = self.telemetry.query(limit=50)
+                        if recent:
+                            packet["_telemetry"] = recent
 
                     try:
                         await send_fn(json.dumps(packet))
@@ -310,11 +340,56 @@ async def handle_client_messages(
 
 # -- WebSocket server --------------------------------------------------------
 
+async def handle_telemetry_subscriber(websocket) -> None:
+    """Handle a /telemetry WebSocket connection — streams real-time events."""
+    import urllib.parse
+
+    # Parse filter parameters from the query string
+    path = getattr(websocket, "path", "/telemetry")
+    params = {}
+    if "?" in path:
+        for part in path.split("?", 1)[1].split("&"):
+            if "=" in part:
+                k, v = part.split("=", 1)
+                params[urllib.parse.unquote(k)] = urllib.parse.unquote(v)
+
+    # Find the most recent active session's bus
+    target_bus = None
+    for bus in reversed(_telemetry_registry.values()):
+        target_bus = bus
+        break
+
+    if target_bus is None:
+        await websocket.send(json.dumps({"error": "no active session"}))
+        await websocket.close()
+        return
+
+    subscriber = TelemetrySubscriber(websocket, filters=params)
+    target_bus.add_subscriber(subscriber)
+
+    try:
+        # Keep the connection alive — client sends nothing, we push events
+        async for _ in websocket:
+            pass  # client messages are ignored (firehose mode)
+    except Exception:
+        pass
+    finally:
+        target_bus.remove_subscriber(subscriber)
+
+
 async def handle_connection(websocket) -> None:
     """
-    Handle a single WebSocket connection through its full lifecycle:
-    receive world def → run simulation → clean shutdown.
+    Dispatch WebSocket connections based on path:
+      /ws        → simulation session
+      /telemetry → real-time event stream subscriber
     """
+    path = getattr(websocket, "path", "/ws")
+
+    if path == "/telemetry":
+        await handle_telemetry_subscriber(websocket)
+        return
+
+    # Default: simulation session on /ws
     remote = getattr(websocket, "remote_address", ("unknown", 0))
     logger.info("Client connected: %s", remote)
 
@@ -350,6 +425,17 @@ async def handle_connection(websocket) -> None:
 
     # Step 2: Initialize session (before ack so we can include species defs)
     session = SimulationSession(world_config)
+
+    # Telemetry bus for this session
+    telemetry = TelemetryBus(session_id=session_id)
+    telemetry.start()
+    _telemetry_registry[session_id] = telemetry
+    session.telemetry = telemetry
+
+    telemetry.info(
+        tick=0, src="worker", evt="session_init",
+        detail={"entity_count": len(world_config.get("entities", []))},
+    )
 
     # Build species definitions for client-side agency
     species_defs = session.engine.get_species_definitions()
@@ -396,6 +482,15 @@ async def handle_connection(websocket) -> None:
             logger.error("Task error: %s", task.exception())
 
     logger.info("Session %s ended: %d ticks", session_id, session.ticks_completed)
+
+    # Shut down telemetry bus (flushes remaining events to disk)
+    if telemetry:
+        telemetry.warn(
+            tick=session.engine.tick, src="worker", evt="session_end",
+            detail={"ticks_completed": session.ticks_completed},
+        )
+        await telemetry.stop()
+        _telemetry_registry.pop(session_id, None)
 
 
 async def start_server(
@@ -495,6 +590,26 @@ async def start_server(
         if request.path == "/ws":
             return None  # Proceed with WebSocket upgrade
 
+        # Telemetry WS endpoint — streams real-time events
+        if request.path == "/telemetry":
+            return None  # Proceed with WebSocket upgrade (handled separately)
+
+        # /logs HTTP API — query recent telemetry events
+        if request.path.startswith("/logs"):
+            target_bus = None
+            for bus in reversed(_telemetry_registry.values()):
+                target_bus = bus
+                break
+            if target_bus is None:
+                return Response(
+                    404, "Not Found",
+                    Headers({"Content-Type": "text/plain"}),
+                    b"No active telemetry session",
+                )
+            status, headers_dict, body = build_telemetry_response(target_bus, request.path)
+            resp_headers = Headers(headers_dict)
+            return Response(status, "OK" if status == 200 else "Not Found", resp_headers, body)
+
         if request.path in ("/", "/index.html"):
             if viz_html:
                 return Response(
@@ -540,8 +655,8 @@ async def start_server(
         return Response(404, "Not Found", Headers(), b"Not found")
 
     logger.info(
-        "Starting worker on http://%s:%d (viz) + ws://%s:%d/ws (simulation)",
-        host, port, host, port,
+        "Starting worker on http://%s:%d (viz+logs) + ws://%s:%d/ws (sim) + ws://%s:%d/telemetry",
+        host, port, host, port, host, port,
     )
 
     # Handle graceful shutdown via SIGTERM/SIGINT
