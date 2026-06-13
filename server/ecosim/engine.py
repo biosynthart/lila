@@ -758,8 +758,6 @@ class EcosystemEngine:
         Args:
             events: List of event dicts from client heartbeat.
         """
-        import random as _random
-
         for ev in events:
             etype = ev.get("type", "")
 
@@ -774,6 +772,8 @@ class EcosystemEngine:
 
     def _absorb_reproduction(self, ev: dict[str, Any]) -> None:
         """Absorb a client-reported reproduction event."""
+        import random as _random
+
         parent_id = ev.get("parent_id", "")
         parent = self.entities.get(parent_id)
         if not parent or not is_alive(parent):
