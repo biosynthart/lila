@@ -566,7 +566,7 @@ async def start_server(
         logger.warning("Visualizer not found — HTTP will return 404")
 
     # MIME types for static file serving
-    _MIME = {
+    _mime = {
         ".html": "text/html; charset=utf-8",
         ".css":  "text/css; charset=utf-8",
         ".js":   "application/javascript; charset=utf-8",
@@ -641,7 +641,7 @@ async def start_server(
 
             if file_path.is_file():
                 ext = file_path.suffix.lower()
-                content_type = _MIME.get(ext, "application/octet-stream")
+                content_type = _mime.get(ext, "application/octet-stream")
                 try:
                     data = file_path.read_bytes()
                     return Response(

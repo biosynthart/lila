@@ -9,9 +9,7 @@ from __future__ import annotations
 import argparse
 import json
 import logging
-import sys
 import time
-from pathlib import Path
 
 import pygame
 
@@ -89,7 +87,6 @@ class LilaClient:
         from .constants import CELL_PX, GRID_SIZE, PADDING, HEARTBEAT_INTERVAL_MS
         from .pygame_renderer import draw_all
         from .agency import step_agency
-        from .reconciliation import reconcile
 
         pygame.init()
         pygame.display.set_caption("līlā — ecosystem")

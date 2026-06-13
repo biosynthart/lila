@@ -36,11 +36,10 @@ from __future__ import annotations
 import asyncio
 import json
 import logging
-import os
 import pathlib
 import time
 from collections import deque
-from typing import Any, Callable, Optional
+from typing import Any
 
 logger = logging.getLogger("lila.telemetry")
 
@@ -107,7 +106,7 @@ class TelemetryBus:
         self._buffer: deque[dict[str, Any]] = deque(maxlen=self._max_memory)
 
         # File writer state
-        self._file: Optional[Any] = None
+        self._file: Any | None = None
         self._current_file_size: int = 0
         self._log_path: pathlib.Path | None = None
 
@@ -115,7 +114,7 @@ class TelemetryBus:
         self._subscribers: list[TelemetrySubscriber] = []
 
         # Background task for async I/O
-        self._task: Optional[asyncio.Task] = None
+        self._task: asyncio.Task | None = None
         self._queue: asyncio.Queue = asyncio.Queue()
         self._running = False
 
@@ -139,7 +138,7 @@ class TelemetryBus:
         if self._task:
             try:
                 await asyncio.wait_for(self._task, timeout=2.0)
-            except (asyncio.TimeoutError, asyncio.CancelledError):
+            except (TimeoutError, asyncio.CancelledError):
                 pass
 
     # ── Emit API ─────────────────────────────────────────────────────────
@@ -246,13 +245,13 @@ class TelemetryBus:
     async def _io_loop(self) -> None:
         """Background task: write events to file and broadcast to WS subscribers."""
         batch: list[dict[str, Any]] = []
-        BATCH_SIZE = 10  # flush every N events or on timeout
+        _batch_size = 10  # flush every N events or on timeout
 
         while self._running:
             try:
                 # Wait for events with a short timeout to allow periodic flushes
                 item = await asyncio.wait_for(self._queue.get(), timeout=0.5)
-            except asyncio.TimeoutError:
+            except TimeoutError:
                 item = None
 
             if item is None:
@@ -262,7 +261,7 @@ class TelemetryBus:
             batch.append(event)
 
             # Flush batch when it reaches size or on timeout path
-            if len(batch) >= BATCH_SIZE:
+            if len(batch) >= _batch_size:
                 await self._flush_batch(batch)
                 batch.clear()
 
@@ -305,7 +304,7 @@ class TelemetryBus:
             self._rotate_file()
 
         try:
-            written = self._file.write(data)
+            self._file.write(data)
             self._current_file_size += len(data.encode("utf-8"))
         except OSError as e:
             logger.error("Failed to write telemetry log: %s", e)
@@ -403,8 +402,6 @@ def build_telemetry_response(
 
     Returns (status_code, headers, body).
     """
-    import urllib.parse
-
     params = build_telemetry_query_params(path)
 
     if path.rstrip("/") == "/logs/stats":

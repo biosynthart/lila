@@ -18,7 +18,6 @@ from pathlib import Path
 from typing import Optional
 
 import dearpygui.dearpygui as dpg
-from .world_model import WorldModel
 from .imgui_view import TelemetryBuffer
 
 logger = logging.getLogger("lila.client.replay")
@@ -59,7 +58,6 @@ class ReplaySession:
 def run_replay(log_path: Path, speed: float = 1.0) -> None:
     """Run a replay session in the Dear PyGui viewer."""
     session = ReplaySession(log_path)
-    world = WorldModel()
     telemetry = TelemetryBuffer()
 
     replay_tick = [session.tick_range[0]]

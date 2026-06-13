@@ -123,7 +123,6 @@ class DearPyGuiViewer:
                 dpg.add_text("Levels:")
                 with dpg.group(tag="lvl_filters", horizontal=True):
                     for level in ("DEBUG", "INFO", "WARN", "ERROR"):
-                        c = COLORS.get(f"level_{level}", (180, 180, 180))
                         dpg.add_checkbox(label=level, default_value=True, tag=f"lvl_{level}", callback=self._on_level_filter)
 
                 dpg.add_separator()
