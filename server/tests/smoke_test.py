@@ -288,8 +288,8 @@ def main():
             print(f"\n--- Tick {packet['tick']} ---")
             for u in packet["entity_updates"]:
                 state = u["state"]
-                pos = u["position"]
-                key_vars = {k: v for k, v in u["state_vars"].items()
+                pos = u.get("ref_position", u.get("position", [0, 0, 0]))
+                key_vars = {k: v for k, v in u.get("drive", u.get("state_vars", {})).items()
                            if k in ("hunger", "energy", "hydration", "growth",
                                     "health", "colony_health", "population")}
                 ml = u.get("motion_latent")
